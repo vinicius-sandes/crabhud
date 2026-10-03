@@ -20,7 +20,12 @@ const BAND = {
 
 // The world beneath the plugin: a clock, a store, an environment, and a small
 // disk in memory (the engine hands paths over in the platform's spelling).
-function world(on: any, env: Record<string, string> = {}, files: Map<string, string> = new Map()) {
+function world(
+  on: any,
+  env: Record<string, string> = {},
+  files: Map<string, string> = new Map(),
+  store: Record<string, unknown> = { language: 'en' },
+) {
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
   for (const [p, text] of [...files]) {
     files.delete(p)
@@ -29,7 +34,8 @@ function world(on: any, env: Record<string, string> = {}, files: Map<string, str
   const mtimes = new Map<string, number>()
   let writes = 1
   const clock = mock.clock(on, { now })
-  mock.store(on)
+  mock.store(on, store)
+  on('settings.read', () => ({ value: {} }) as any)
   mock.env(on, { HOME: '/home/me', ...env })
   on('session.measure', (_$: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
   on('fs.read', ((_$: unknown, e: { path: string }) =>
@@ -81,6 +87,7 @@ async function start($: any, on: any) {
 
 test('desktop bars fill in proportion to the percentage', async ($, on) => {
   world(on)
+  await start($, on)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 100, rows: 4, in: 'hud' })
@@ -121,8 +128,38 @@ test("another chat's newer limits reading wins; this chat's context stays its ow
   await ui.unmount()
 })
 
-test('labels follow the language option', { options: { language: 'pt-BR' } }, async ($, on) => {
-  world(on)
+test('the first run asks for the language, once, in English', async ($, on) => {
+  world(on, {}, new Map(), {})
+  await start($, on)
+  await $.session.measure(measure)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    const ask = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
+    console.log(`${surface} first run: ${ask}`)
+    expect(ask).toContain('Choose the HUD language')
+    expect(ask).toContain('/hud language')
+    expect(await ui.find({ key: 'lang-en' })).toBeDefined()
+    if (surface === 'desktop') {
+      await ui.press({ key: 'lang-pt-BR' })
+      await ui.redraw()
+      await ui.resize({ columns: 100, rows: 4, in: 'hud' })
+      await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+      const open = await shown(ui)
+      console.log(`after picking: ${open}`)
+      expect(open).toContain('contexto')
+      expect(await ui.find({ key: 'lang-en' })).toBeUndefined()
+    }
+    await ui.unmount()
+  }
+  // Once picked, a new drawing does not ask again.
+  const again = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  expect(await again.find({ key: 'lang-en' })).toBeUndefined()
+  await again.unmount()
+})
+
+test('labels follow the picked language', async ($, on) => {
+  world(on, {}, new Map(), { language: 'pt-BR' })
+  await start($, on)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 100, rows: 4, in: 'hud' })
@@ -172,6 +209,7 @@ test('ultracode shimmers behind the band and stays readable', async ($, on) => {
 
 test('compact fits every width and the cost is never cut', async ($, on) => {
   world(on)
+  await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
@@ -188,6 +226,7 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
 
 test('a click anywhere expands, another collapses', async ($, on) => {
   world(on)
+  await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)

@@ -48,6 +48,7 @@ declare module 'claude-code' {
       expanded: boolean
       hidden: boolean
       alerted: string[]
+      language: HudLang | null
     }
   }
 }

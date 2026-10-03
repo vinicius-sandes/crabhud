@@ -1,18 +1,9 @@
 {
   "name": "pixel-hud",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A pixel-art HUD above the prompt: model, effort, context, 5-hour and 7-day limits, and session cost, live",
   "author": { "name": "Vinicius Sandes" },
   "repository": "https://github.com/Apoio-Midias/pixel-hud",
   "license": "MIT",
-  "types": "./types/index.d.ts",
-  "userConfig": {
-    "language": {
-      "type": "string",
-      "title": "HUD language",
-      "description": "Language of the HUD's labels",
-      "default": "en",
-      "options": ["en", "pt-BR"]
-    }
-  }
+  "types": "./types/index.d.ts"
 }

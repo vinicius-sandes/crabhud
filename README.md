@@ -40,13 +40,15 @@ Works in the Claude desktop app (Code tab) and in the Claude Code terminal, on W
 
    If your `settings.json` already has an `"env"` block, add just the `CLAUDE_CODE_PLUGIN_DIRS` key to it.
 
-3. Open a new chat. The HUD appears above the prompt.
+3. Open a new chat. The HUD appears above the prompt, in every chat from now on, and asks which language you want.
 
 To update: `git -C ~/.claude/mods/pixel-hud pull`, then open a new chat.
 
-## Options
+## Language
 
-The HUD's labels are in English by default. For Brazilian Portuguese, add to `~/.claude/settings.json`:
+The HUD speaks English by default and also Brazilian Portuguese. The first time it appears, it asks which one you want, once. Your pick is kept for every chat on that machine. Change it anytime with `/hud language`.
+
+To skip the question (for example, when setting up a machine from a script), set it in `~/.claude/settings.json`:
 
 ```json
 "pluginConfigs": { "pixel-hud": { "options": { "language": "pt-BR" } } }
@@ -55,6 +57,7 @@ The HUD's labels are in English by default. For Brazilian Portuguese, add to `~/
 ## Commands
 
 - `/hud off` hides the HUD, `/hud on` shows it again, `/hud` toggles it.
+- `/hud language` asks for the language again; `/hud language en` or `/hud language pt-BR` sets it directly.
 
 ## Cost
 

@@ -12,12 +12,17 @@ const effortA = atom({ plugin: 'pixel-hud', key: 'effort' } as const, null)
 const expandedA = atom({ plugin: 'pixel-hud', key: 'expanded' } as const, false)
 const hiddenA = atom({ plugin: 'pixel-hud', key: 'hidden' } as const, false)
 const alertedA = atom({ plugin: 'pixel-hud', key: 'alerted' } as const, [])
+// The HUD's language; null until the person picks one on the first run.
+const langA = atom({ plugin: 'pixel-hud', key: 'language' } as const, null)
+
+const LANGS: readonly HudLang[] = ['en', 'pt-BR']
+const COMMAND = 'Show or hide the HUD (on / off), or pick its language (language)'
 
 const TEXT = {
   en: {
-    command: 'Show or hide the HUD above the prompt (on / off)',
     hidden: 'HUD hidden. Use /hud on to show it again.',
     shown: 'HUD shown.',
+    language: (name: string) => `HUD language: ${name}.`,
     context: 'Context',
     limit: { five_hour: '5-hour limit', seven_day: '7-day limit', spend_limit: 'Spend limit' } as Record<string, string>,
     resets: (t: string) => ` (resets in ${t})`,
@@ -25,9 +30,9 @@ const TEXT = {
     now: 'now',
   },
   'pt-BR': {
-    command: 'Mostra ou esconde o HUD acima da caixa de texto (on / off)',
     hidden: 'HUD escondido. Use /hud on para mostrar.',
     shown: 'HUD visível.',
+    language: (name: string) => `Idioma do HUD: ${name}.`,
     context: 'Contexto',
     limit: { five_hour: 'Limite de 5h', seven_day: 'Limite de 7 dias', spend_limit: 'Limite de gasto' } as Record<string, string>,
     resets: (t: string) => ` (reseta em ${t})`,
@@ -134,13 +139,31 @@ async function sharedPath($: EngineInterface): Promise<string | null> {
   return dir ? `${dir}/pixel-hud-limits.json` : null
 }
 
-// The HUD's words, set by register from the language option.
-let T = TEXT.en
+const LANG_NAME: Record<HudLang, string> = { en: 'English', 'pt-BR': 'Português (BR)' }
+const asLang = (v: unknown): HudLang | null =>
+  typeof v === 'string' ? (LANGS.find(l => l.toLowerCase() === v.toLowerCase()) ?? (/^pt/i.test(v) ? 'pt-BR' : /^en/i.test(v) ? 'en' : null)) : null
 
+// The language picked in the HUD (kept across chats), else one set in
+// settings (`pluginConfigs.pixel-hud.options.language`), else none yet: the
+// HUD then asks, once.
+async function loadLanguage($: EngineInterface): Promise<HudLang | null> {
+  const picked = asLang(await $.store.get('language'))
+  if (picked) return picked
+  const settings = (await $.settings.read().catch(() => ({}))) as {
+    pluginConfigs?: Record<string, { options?: Record<string, unknown> }>
+  }
+  return asLang(settings.pluginConfigs?.['pixel-hud']?.options?.language)
+}
+
+async function chooseLanguage($: EngineInterface, lang: HudLang): Promise<void> {
+  await update($, langA, () => lang)
+  await $.store.set('language', lang)
+}
 
 // Toast once per gauge when it crosses 90%; re-arm below 80%.
 async function checkAlerts($: EngineInterface) {
-  const [chat, limits, now] = await Promise.all([read($, chatA), read($, limitsA), $.clock.now()])
+  const [chat, limits, now, lang] = await Promise.all([read($, chatA), read($, limitsA), $.clock.now(), read($, langA)])
+  const T = TEXT[lang ?? 'en']
   const gauges = [
     { id: 'ctx', percent: chat?.ctxPercent ?? 0, name: T.context, after: '' },
     ...(limits?.limits ?? []).map(l => ({
@@ -231,18 +254,18 @@ async function pullRecord($: EngineInterface) {
   else if (effort) await setEffort($, effort)
 }
 
-export const register: Register = (on, options) => {
-  const lang: HudLang = options.language === 'pt-BR' ? 'pt-BR' : 'en'
-  T = TEXT[lang]
+export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'hud', description: T.command })
+    await $.command.register({ name: 'hud', description: COMMAND })
 
-    const [savedExpanded, savedHidden] = await Promise.all([
+    const [savedExpanded, savedHidden, lang] = await Promise.all([
       $.store.get('expanded'),
       $.store.get('hidden'),
+      loadLanguage($),
     ])
     if (typeof savedExpanded === 'boolean') await update($, expandedA, () => savedExpanded)
     if (typeof savedHidden === 'boolean') await update($, hiddenA, () => savedHidden)
+    await update($, langA, () => lang)
 
     // What this chat already knows is a baseline, not news: the shared file
     // may hold a fresher reading from another chat.
@@ -300,7 +323,19 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'hud' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
+    const [arg = '', value = ''] = e.args.trim().split(/\s+/)
+    if (/^lang(uage)?$/i.test(arg)) {
+      // `/hud language pt-BR` sets it; a bare `/hud language` asks again.
+      const lang = asLang(value)
+      if (lang === null) {
+        await update($, langA, () => null)
+        await update($, hiddenA, () => false)
+        return { text: 'Pick the HUD language above the prompt.' }
+      }
+      await chooseLanguage($, lang)
+      return { text: TEXT[lang].language(LANG_NAME[lang]) }
+    }
+    const T = TEXT[(await read($, langA)) ?? 'en']
     const hidden = arg === 'off' ? true : arg === 'on' ? false : !(await read($, hiddenA))
     await update($, hiddenA, () => hidden)
     await $.store.set('hidden', hidden)
@@ -324,7 +359,20 @@ export const register: Register = (on, options) => {
 
     const els = $.ui.resolve(e)
     if (!('Client' in els)) return next(e)
-    const { Client } = els
+    const { Box, Button, Client, Text } = els
+
+    // First run: ask for the language, in English, once.
+    const lang = await read($, langA)
+    if (lang === null) {
+      return (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
+          <Text bold>Choose the HUD language:</Text>
+          <Button key="lang-en" label="English" onPress={() => chooseLanguage($, 'en')} />
+          <Button key="lang-pt-BR" label="Português (BR)" onPress={() => chooseLanguage($, 'pt-BR')} />
+          <Text dimColor>You can change it anytime with /hud language</Text>
+        </Box>
+      )
+    }
 
     const props: HudProps = {
       surface: e.surface === 'desktop' ? 'desktop' : 'terminal',
