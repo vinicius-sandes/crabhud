@@ -33,6 +33,8 @@ export type HudProps = {
   limits: HudLimit[]
   model: string
   effort: string | null
+  /** Ultracode: the app's picker's top step, or the terminal's Tab switch. */
+  ultracode: boolean
   working: boolean
   expanded: boolean
   now: number
@@ -45,6 +47,7 @@ declare module 'claude-code' {
       limits: HudLimits | null
       model: string
       effort: string | null
+      ultracode: boolean
       expanded: boolean
       hidden: boolean
       alerted: string[]

@@ -11,14 +11,17 @@ A pixel-art status HUD for [Claude Code](https://claude.com/claude-code) that si
 
 Click anywhere on the HUD to switch between **compact** (one line) and **expanded** (longer bars, token counts, full reset times). Your choice is remembered.
 
-In **Ultracode**, the HUD switches palettes: the bars flow through a purple-to-pink gradient and a soft pixel wave drifts behind everything.
+The loudest settings get their own look, following each surface's own effort picker:
+
+- **Desktop app:** **Ultracode** switches palettes: the bars flow through a purple-to-pink gradient and a soft pixel wave drifts behind everything.
+- **Terminal:** Low is yellow, Medium green, High purple. **xhigh** turns the HUD purple, with a purple wave behind it; **max** turns it every colour, with a rainbow wave. Ultracode (Tab in `/effort`) shows next to the level, as in `Max · Ultracode`.
 
 When the context or a limit crosses 90%, you get a toast.
 
 ## How it stays live
 
 - **Context and cost** refresh after every model response, not only when a turn ends.
-- **Model and effort** follow the picker under the chat the moment you change it (desktop app), or from the next message (terminal).
+- **Model and effort** follow the picker under the chat the moment you change it (desktop app). In the terminal they follow `/effort` the moment it closes, and start from the effort saved for your model.
 - **Limits** are the account's, not the chat's: every chat running the HUD shares its latest reading through a small file (`~/.claude/pixel-hud-limits.json`), and every HUD shows the freshest one. Use one chat to 97% and the others show 97% within half a second.
 - A window whose reset time has passed drops back to 0% until the next reading.
 

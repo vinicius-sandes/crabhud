@@ -20,7 +20,8 @@ const RED = '#E5534B'
 const ORANGE = '#D97757'
 const SPIN = ['✻', '✶', '✷', '✸', '✹', '✺']
 const GLYPH: Record<Px, string> = { full: '█', dark: '▓', mid: '▒', empty: '·' }
-// Effort from calm to loud: grey, sky, the HUD's purple, magenta, hot pink.
+// Effort from calm to loud on the desktop: grey, sky, the HUD's purple,
+// magenta, hot pink.
 const EFFORT_COLOR: Record<string, string> = {
   low: '#9AA0A8',
   medium: '#5AA9E6',
@@ -28,12 +29,21 @@ const EFFORT_COLOR: Record<string, string> = {
   xhigh: '#C86DD7',
   max: '#F25F8B',
 }
+// The terminal's own effort picker: low yellow, medium green, high purple
+// (xhigh and max wear a theme, below).
+const TERMINAL_EFFORT_COLOR: Record<string, string> = {
+  low: '#E9C46A',
+  medium: GREEN,
+  high: PURPLE,
+  xhigh: PURPLE,
+  max: '#F25F8B',
+}
 // Every word the HUD draws, per language. The effort names are the app's
 // picker's; Ultracode is its own switch on top of `xhigh`, which the hooks
-// module reports as `ultracode`.
+// module reports apart, as `ultracode`.
 const WORDS = {
   en: {
-    effortNames: { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max', ultracode: 'Ultracode' } as Record<string, string>,
+    effortNames: { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' } as Record<string, string>,
     ready: 'ready',
     working: 'working',
     alert: 'alert',
@@ -50,7 +60,7 @@ const WORDS = {
     now: 'now',
   },
   'pt-BR': {
-    effortNames: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máximo', ultracode: 'Ultracode' } as Record<string, string>,
+    effortNames: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string>,
     ready: 'pronto',
     working: 'rodando',
     alert: 'atenção',
@@ -128,11 +138,39 @@ function glyphBar(p: number | null, n: number, colorAt: (i: number) => string): 
   return pixels(p, n).map((px, i) => (px === 'empty' ? { t: GLYPH.empty, dim: true } : { t: GLYPH[px], c: colorAt(i) }))
 }
 
-// Ultracode's palette flowing along a bar, a step every two frames; a bar past
-// 90% keeps its warning in the warm end of it.
-function ultraAt(p: number, i: number, frame: number): string {
+// A loud look: a palette that flows along the bars and the labels, and the
+// colour of each step (1-3) of the wave behind the band at column `i`.
+type Theme = { flow: readonly string[]; wave: (step: number, i: number, t: number, desktop: boolean) => string }
+
+const PURPLE_WAVE = (step: number, _i: number, _t: number, desktop: boolean) =>
+  desktop ? PURPLE + ['62', '3D', '52'][step - 1] : ['#544D80', '#433D66', '#544D80'][step - 1]
+const RAINBOW = ['#F25F8B', '#F08A4B', '#E9C46A', '#3FB68B', '#5AA9E6', '#8B83E6', '#C86DD7']
+const RAINBOW_DIM = ['#5C2A3A', '#5A3A24', '#57502C', '#1F4A3A', '#24405A', '#3A3560', '#4E2D55']
+
+// The desktop's Ultracode; under the terminal, xhigh (purple) and max (every
+// colour), as its own picker draws them.
+const THEMES = {
+  ultracode: { flow: ULTRA, wave: PURPLE_WAVE },
+  xhigh: { flow: ['#6E64D8', '#8B83E6', '#A58BEB', '#BBA8F2', '#A58BEB', '#8B83E6'], wave: PURPLE_WAVE },
+  max: {
+    flow: RAINBOW,
+    wave: (_step: number, i: number, t: number, desktop: boolean) => {
+      const k = Math.floor(i / 4 + t / 3) % RAINBOW.length
+      return desktop ? RAINBOW[k] + '55' : RAINBOW_DIM[k]
+    },
+  },
+} satisfies Record<string, Theme>
+
+function themeOf(p: HudProps): Theme | null {
+  if (p.surface === 'desktop') return p.ultracode ? THEMES.ultracode : null
+  return p.effort === 'max' ? THEMES.max : p.effort === 'xhigh' ? THEMES.xhigh : null
+}
+
+// The theme's palette flowing along a bar, a step every two frames; a bar
+// past 90% keeps its warning in red and pink.
+function flowAt(theme: Theme, p: number, i: number, frame: number): string {
   const k = Math.floor(i / 2 + frame / 2)
-  return p >= 90 ? (k % 2 === 0 ? '#F25F8B' : RED) : ULTRA[k % ULTRA.length]
+  return p >= 90 ? (k % 2 === 0 ? '#F25F8B' : RED) : theme.flow[k % theme.flow.length]
 }
 
 function merge(segs: Seg[]): Seg[] {
@@ -151,15 +189,16 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
   const desktop = props.surface === 'desktop'
   const init: State = { open: props.expanded, frame: 0, refresh: 0 }
   const st = surface.state ?? init
+  const theme = themeOf(props)
 
   if (surface.state === undefined) {
     let ticks = 0
     surface.every(200, () => {
       ticks++
       const cur = surface.state ?? init
-      // Animate while Claude works or Ultracode is on; otherwise repaint
-      // every 30s so the reset countdowns stay current.
-      if (latest?.working || latest?.effort === 'ultracode') surface.setState({ ...cur, frame: cur.frame + 1 })
+      // Animate while Claude works or a theme is on; otherwise repaint every
+      // 30s so the reset countdowns stay current.
+      if (latest && (latest.working || themeOf(latest))) surface.setState({ ...cur, frame: cur.frame + 1 })
       else if (ticks % 150 === 0) surface.setState({ ...cur, refresh: cur.refresh + 1 })
     })
     const toggle = () => {
@@ -184,7 +223,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
   const line = (segs: Seg[]) => merge(segs).map(text)
   const bar = (p: number | null, n: number, base: string): RenderElement => {
     const col = tone(p ?? 0, base)
-    const colorAt = (i: number) => (ultra ? ultraAt(p ?? 0, i, st.frame) : col)
+    const colorAt = (i: number) => (theme ? flowAt(theme, p ?? 0, i, st.frame) : col)
     if (!desktop) return <Box flexDirection="row" flexShrink={0}>{line(glyphBar(p, n, colorAt))}</Box>
     // Each pixel is its own glyph clipped to one cell: the █ ▓ ▒ texture
     // stays, and the bar's length is the cells', not the font's.
@@ -219,52 +258,60 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
     ? { t: SPIN[st.frame % SPIN.length], c: ORANGE }
     : alert
       ? { t: '!', c: RED, bold: true }
-      : { t: '✓', c: props.effort === 'ultracode' ? ULTRA[Math.floor(st.frame / 2) % ULTRA.length] : GREEN }
-  const ultra = props.effort === 'ultracode'
-  const effortText = effortName(props.effort)
-  const effort: RenderElement = ultra ? (
+      : { t: '✓', c: theme ? theme.flow[Math.floor(st.frame / 2) % theme.flow.length] : GREEN }
+  // Ultracode is a switch over an effort level: the app's picker sets it on
+  // top of Extra (shown as just "Ultracode"), the terminal's Tab on any level
+  // (shown as "Max · Ultracode"). A themed level shimmers in its palette.
+  const ultra = props.ultracode
+  const level = ultra && desktop && (props.effort === 'xhigh' || props.effort === null) ? null : props.effort
+  const shimmerWord = (word: string, palette: readonly string[]) =>
+    [...word].map((ch, i) => (
+      <Text bold color={palette[(i + st.frame) % palette.length]}>
+        {ch}
+      </Text>
+    ))
+  const levelName = level === null ? null : effortName(level)
+  const levelEl: RenderElement[] =
+    level === null || levelName === null
+      ? []
+      : !desktop && theme
+        ? shimmerWord(levelName, theme.flow)
+        : [text({ t: levelName, c: (desktop ? EFFORT_COLOR : TERMINAL_EFFORT_COLOR)[level] || PURPLE, bold: level === 'xhigh' || level === 'max' })]
+  const effortText = [levelName, ultra ? 'Ultracode' : null].filter(Boolean).join(' · ') || '—'
+  const effort: RenderElement = (
     <Box flexDirection="row" flexShrink={0}>
-      {[...effortText].map((ch, i) => (
-        <Text bold color={ULTRA[(i + st.frame) % ULTRA.length]}>
-          {ch}
-        </Text>
-      ))}
+      {levelEl}
+      {ultra && levelEl.length > 0 ? text({ t: ' · ', dim: true }) : []}
+      {ultra ? shimmerWord('Ultracode', theme?.flow ?? ULTRA) : []}
+      {levelEl.length === 0 && !ultra ? text({ t: '—', dim: true }) : []}
     </Box>
-  ) : (
-    text({
-      t: effortText,
-      c: (props.effort !== null && EFFORT_COLOR[props.effort]) || PURPLE,
-      bold: props.effort === 'xhigh' || props.effort === 'max',
-    })
   )
   const est = (s: string) => (desktop ? Math.ceil(s.length * 0.8) : s.length)
 
-  // Under Ultracode the band gets its dither wave behind everything, drawn
-  // first so the readings paint over it. The desktop's shades are
-  // translucent, so they sit on a light theme and a dark one alike.
+  // A theme puts its dither wave behind everything, drawn first so the
+  // readings paint over it. The desktop's shades are translucent, so they sit
+  // on a light theme and a dark one alike.
   const backdrop = (rows: number, body: RenderElement): RenderElement => {
-    if (!ultra) return body
-    const shades = desktop
-      ? [PURPLE + '62', PURPLE + '3D', PURPLE + '52']
-      : ['#544D80', '#433D66', '#544D80']
+    if (!theme) return body
     const glyphs = ['·', '░', '▒']
     const lines = Array.from({ length: rows }, (_, r) => {
       const v = shimmer(r, cols, st.frame)
+      const color = (i: number) => (v[i] === 0 ? '' : theme.wave(v[i], i, st.frame, desktop))
       const out: RenderElement[] = []
       for (let i = 0; i < v.length; ) {
         let j = i
-        while (j < v.length && v[j] === v[i] && (desktop ? v[i] === 0 : true)) j++
+        while (j < v.length && v[j] === v[i] && color(j) === color(i) && (desktop ? v[i] === 0 : true)) j++
         if (v[i] === 0) {
           out.push(desktop ? <Box width={j - i} height={1} flexShrink={0} /> : <Text>{' '.repeat(j - i)}</Text>)
         } else if (desktop) {
           j = i + 1
           out.push(
             <Box width={1} height={1} flexShrink={0} overflow="hidden" justifyContent="center">
-              <Text color={shades[v[i] - 1]}>{glyphs[v[i] - 1]}</Text>
+              <Text color={color(i)}>{glyphs[v[i] - 1]}</Text>
             </Box>,
           )
         } else {
-          out.push(<Text color={shades[v[i] - 1]}>{glyphs[v[i] - 1].repeat(j - i)}</Text>)
+          out.push(<Text color={color(i)}>{glyphs[v[i] - 1].repeat(j - i)}</Text>)
         }
         i = j
       }
@@ -295,7 +342,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       ...(withReset && l?.resetsAt != null ? [{ seg: { t: `↻ ${fmtLeft(l.resetsAt - now, true, W.now)}`, dim: true } }] : []),
     ]
     const build = (n: number, resets: boolean, head: boolean): Piece[][] => [
-      [{ seg: status }, { seg: { t: props.model, bold: true } }, ...(head ? [{ el: effort, w: ultra ? effortText.length + 1 : est(effortText) }] : [])],
+      [{ seg: status }, { seg: { t: props.model, bold: true } }, ...(head ? [{ el: effort, w: ultra || (theme && !desktop) ? effortText.length + 1 : est(effortText) }] : [])],
       [
         { seg: { t: 'ctx', dim: true } },
         ...(n > 0 ? [{ bar: { p: ctxP, n, base: PURPLE } }] : []),
@@ -371,7 +418,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
   )
   const limitRow = (icon: string, label: string, l: (HudLimit & { isReset?: boolean }) | undefined) =>
     row(
-      { t: icon, c: ultra ? ultraAt(l?.percent ?? 0, 3, st.frame) : tone(l?.percent ?? 0, GREEN) },
+      { t: icon, c: theme ? flowAt(theme, l?.percent ?? 0, 3, st.frame) : tone(l?.percent ?? 0, GREEN) },
       label,
       bar(l?.percent ?? null, n, GREEN),
       l?.percent ?? null,
@@ -381,7 +428,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
     ? { t: W.working, c: ORANGE }
     : alert
       ? { t: W.alert, c: RED }
-      : { t: W.ready, c: ultra ? ULTRA[Math.floor(st.frame / 2) % ULTRA.length] : GREEN }
+      : { t: W.ready, c: theme ? theme.flow[Math.floor(st.frame / 2) % theme.flow.length] : GREEN }
 
   return backdrop(
     4 + others.length,
@@ -403,7 +450,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
         </Box>
       </Box>
       {row(
-        { t: '■', c: ultra ? ultraAt(ctxP ?? 0, 0, st.frame) : tone(ctxP ?? 0, PURPLE) },
+        { t: '■', c: theme ? flowAt(theme, ctxP ?? 0, 0, st.frame) : tone(ctxP ?? 0, PURPLE) },
         W.context,
         bar(ctxP, n, PURPLE),
         ctxP,

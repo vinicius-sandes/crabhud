@@ -9,6 +9,7 @@ const chatA = atom({ plugin: 'pixel-hud', key: 'chat' } as const, null)
 const limitsA = atom({ plugin: 'pixel-hud', key: 'limits' } as const, null)
 const modelA = atom({ plugin: 'pixel-hud', key: 'model' } as const, '')
 const effortA = atom({ plugin: 'pixel-hud', key: 'effort' } as const, null)
+const ultraA = atom({ plugin: 'pixel-hud', key: 'ultracode' } as const, false)
 const expandedA = atom({ plugin: 'pixel-hud', key: 'expanded' } as const, false)
 const hiddenA = atom({ plugin: 'pixel-hud', key: 'hidden' } as const, false)
 const alertedA = atom({ plugin: 'pixel-hud', key: 'alerted' } as const, [])
@@ -99,6 +100,10 @@ async function setModel($: EngineInterface, value: string): Promise<void> {
 
 async function setEffort($: EngineInterface, value: string | null): Promise<void> {
   if ((await read($, effortA)) !== value) await update($, effortA, () => value)
+}
+
+async function setUltra($: EngineInterface, value: boolean): Promise<void> {
+  if ((await read($, ultraA)) !== value) await update($, ultraA, () => value)
 }
 
 async function findRecord($: EngineInterface): Promise<string | null> {
@@ -231,12 +236,7 @@ async function pullShared($: EngineInterface) {
 // next turn, but the desktop app saves them to this chat's own record at
 // once: watch that file (re-read only when its mtime moves).
 async function pullRecord($: EngineInterface) {
-  if (record === null) {
-    const [model, effort] = await Promise.all([$.session.model(), $.env.get('CLAUDE_EFFORT')])
-    await setModel($, prettyModel(model))
-    if (effort) await setEffort($, effort)
-    return
-  }
+  if (record === null) return
   const stat = await $.fs.stat(record).catch(() => null)
   if (!stat) {
     record = null
@@ -250,8 +250,55 @@ async function pullRecord($: EngineInterface) {
   // Ultracode is a switch of its own over `xhigh` in the app's picker.
   const ultracode = /"sessionSettings"\s*:\s*\{[^}]*"ultracode"\s*:\s*true/.test(head)
   if (model) await setModel($, prettyModel(model))
-  if (ultracode) await setEffort($, 'ultracode')
-  else if (effort) await setEffort($, effort)
+  if (effort) await setEffort($, effort)
+  await setUltra($, ultracode)
+}
+
+// The terminal has no such record. What this session picked with /effort (or
+// last sent to the model) wins; before that, the effort saved for the model
+// in settings, and Ultracode is the "Dynamic workflows" switch.
+let sessionEffort: string | null = null
+let sessionUltra: boolean | null = null
+
+// "Set effort level to max (this session only) … · Ultracode on": the line
+// the terminal's /effort leaves. One that does not name Ultracode leaves it
+// as it was. Answers whether the text held such a line.
+async function applyEffortLine($: EngineInterface, text: string): Promise<boolean> {
+  const level = /Set effort level to (low|medium|high|xhigh|max)\b/i.exec(text)?.[1]
+  if (!level) return false
+  sessionEffort = level.toLowerCase()
+  await setEffort($, sessionEffort)
+  const ultra = /Ultracode (on|off)\b/i.exec(text)?.[1]
+  if (ultra) {
+    sessionUltra = ultra.toLowerCase() === 'on'
+    await setUltra($, sessionUltra)
+  }
+  return true
+}
+
+// A resumed terminal session: its latest /effort line still applies.
+async function effortFromHistory($: EngineInterface): Promise<void> {
+  const rows = await $.session.messages().catch(() => [])
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (await applyEffortLine($, JSON.stringify(rows[i]))) return
+  }
+}
+
+async function pullTerminal($: EngineInterface) {
+  const [model, rows, settings, envEffort] = await Promise.all([
+    $.session.model(),
+    $.config.list().catch(() => []),
+    $.settings.read().catch(() => ({})),
+    $.env.get('CLAUDE_EFFORT'),
+  ])
+  const pretty = prettyModel(model)
+  await setModel($, pretty)
+  const s = settings as { effortLevel?: unknown; modelSettings?: Record<string, { effortLevel?: unknown }> }
+  const saved = Object.entries(s.modelSettings ?? {}).find(([id]) => prettyModel(id) === pretty)?.[1]?.effortLevel
+  const effort = sessionEffort ?? (typeof saved === 'string' ? saved : null) ?? envEffort ?? (typeof s.effortLevel === 'string' ? s.effortLevel : null)
+  if (effort) await setEffort($, effort)
+  const workflows = rows.find(r => r.key === 'workflows')?.value
+  await setUltra($, sessionUltra ?? workflows === true)
 }
 
 export const register: Register = on => {
@@ -276,11 +323,17 @@ export const register: Register = on => {
     await pullShared($)
 
     record = await findRecord($)
-    await pullRecord($)
+    if (record === null) {
+      await effortFromHistory($)
+      await pullTerminal($)
+    } else {
+      await pullRecord($)
+    }
 
-    // One quarter-second clock: the chat's record each tick, the shared
-    // limits every half second, this chat's usage every second. Each is a
-    // stat or a local read; nothing here reaches the model.
+    // One quarter-second clock: the chat's record each tick (the settings,
+    // under the terminal, each second), the shared limits every half second,
+    // this chat's usage every second. Each is a stat or a local read; nothing
+    // here reaches the model.
     let tick = 0
     let busy = false
     $.clock.every(250, () => {
@@ -289,7 +342,8 @@ export const register: Register = on => {
       tick++
       void (async () => {
         try {
-          await pullRecord($)
+          if (record !== null) await pullRecord($)
+          else if (tick % 4 === 0) await pullTerminal($)
           if (tick % 2 === 0) await pullShared($)
           if (tick % 4 === 0) await applyUsage($, await $.session.usage())
           if (record === null && tick % 200 === 0) record = await findRecord($)
@@ -309,9 +363,13 @@ export const register: Register = on => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    // Without the app's record (the terminal), the request is the best source.
+    // Without the app's record (the terminal), what the request carries is
+    // what this session runs at.
     if (e.agentId === undefined && record === null) {
-      await setEffort($, e.effort === undefined ? null : String(e.effort))
+      if (e.effort !== undefined) {
+        sessionEffort = String(e.effort)
+        await setEffort($, sessionEffort)
+      }
       await setModel($, prettyModel(e.model))
     }
     const result = yield* next(e)
@@ -320,6 +378,19 @@ export const register: Register = on => {
     if (e.agentId === undefined) await applyUsage($, await $.session.usage())
 
     return result
+  })
+
+  // The terminal's /effort writes what it set into the conversation ("Set
+  // effort level to max … · Ultracode on"): read it as the row lands. Only
+  // rows of the session's own making, never the model's words.
+  on('session.append', async ($, e, next) => {
+    const isOwn = e.door !== 'response' && e.door !== 'tool-result' && e.door !== 'tool-message'
+    if (record === null && e.agentId === undefined && isOwn) {
+      const text = e.message.content.map(b => ('text' in b && typeof b.text === 'string' ? b.text : '')).join('\n')
+      await applyEffortLine($, text)
+    }
+
+    return next(e)
   })
 
   on('command.run', { command: 'hud' }, async ($, e) => {
@@ -367,8 +438,8 @@ export const register: Register = on => {
       return (
         <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
           <Text bold>Choose the HUD language:</Text>
-          <Button key="lang-en" label="English" onPress={() => chooseLanguage($, 'en')} />
-          <Button key="lang-pt-BR" label="Português (BR)" onPress={() => chooseLanguage($, 'pt-BR')} />
+          <Button key="lang-en" label="English" hotkey="1" onPress={() => chooseLanguage($, 'en')} />
+          <Button key="lang-pt-BR" label="Português (BR)" hotkey="2" onPress={() => chooseLanguage($, 'pt-BR')} />
           <Text dimColor>You can change it anytime with /hud language</Text>
         </Box>
       )
@@ -381,6 +452,7 @@ export const register: Register = on => {
       limits: (await read($, limitsA))?.limits ?? [],
       model: (await read($, modelA)) || '…',
       effort: await read($, effortA),
+      ultracode: await read($, ultraA),
       working: e.props.isWorking,
       expanded: await read($, expandedA),
       now: await $.clock.now(),

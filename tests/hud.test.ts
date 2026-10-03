@@ -25,6 +25,7 @@ function world(
   env: Record<string, string> = {},
   files: Map<string, string> = new Map(),
   store: Record<string, unknown> = { language: 'en' },
+  settings: Record<string, unknown> = {},
 ) {
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
   for (const [p, text] of [...files]) {
@@ -35,7 +36,7 @@ function world(
   let writes = 1
   const clock = mock.clock(on, { now })
   mock.store(on, store)
-  on('settings.read', () => ({ value: {} }) as any)
+  on('settings.read', () => ({ value: settings }) as any)
   mock.env(on, { HOME: '/home/me', ...env })
   on('session.measure', (_$: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
   on('fs.read', ((_$: unknown, e: { path: string }) =>
@@ -241,4 +242,50 @@ test('a click anywhere expands, another collapses', async ($, on) => {
     expect(await shown(ui)).not.toContain('context')
     await ui.unmount()
   }
+})
+
+test('terminal: effort from settings and /effort; xhigh purple, max every colour', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en' }, { modelSettings: { 'claude-opus-5-5': { effortLevel: 'high' } } })
+  on('config.list', () => ({ value: [] }) as any)
+  let effortLine = ''
+  on('session.messages', () => ({ value: [{ type: 'system', content: effortLine }] }) as any)
+  // What the terminal's /effort leaves in the conversation, read as a session opens.
+  const effortRow = () => $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await start($, on)
+  await $.session.measure(measure)
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'terminal', ...BAND } as any)
+  await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+  const barColors = async () =>
+    (await ui.findAll({ type: 'Text', in: 'hud' }))
+      .filter((t: any) => t.text.includes('█') && t.props.color)
+      .map((t: any) => String(t.props.color))
+  const RAINBOW = ['#F25F8B', '#F08A4B', '#E9C46A', '#3FB68B', '#5AA9E6', '#8B83E6', '#C86DD7']
+
+  // The effort saved for the model, before anything else is known; no theme.
+  const high = await shown(ui)
+  console.log(`terminal high: ${high}`)
+  expect(high).toContain('High')
+  expect(new Set(await barColors()).size).toBe(2) // the purple ctx bar, the green limits
+
+  // /effort picks max with Ultracode: every colour, and it says so.
+  effortLine = 'Set effort level to max (this session only): Maximum capability · Ultracode on'
+  await effortRow()
+  await ui.advance(400)
+  const max = await shown(ui)
+  console.log(`terminal max: ${max}`)
+  expect(max).toContain('Max · Ultracode')
+  const maxColors = new Set(await barColors())
+  expect(maxColors.size > 2).toBe(true)
+  expect([...maxColors].every(c => RAINBOW.includes(c) || c === '#E5534B')).toBe(true)
+
+  // xhigh: purple only. A line that does not name Ultracode keeps it on.
+  effortLine = 'Set effort level to xhigh (saved as your default for new sessions)'
+  await effortRow()
+  await ui.advance(400)
+  const xhigh = await shown(ui)
+  console.log(`terminal xhigh: ${xhigh}`)
+  expect(xhigh).toContain('Extra · Ultracode')
+  const purple = ['#6E64D8', '#8B83E6', '#A58BEB', '#BBA8F2']
+  expect([...new Set(await barColors())].every(c => purple.includes(c))).toBe(true)
+  await ui.unmount()
 })
