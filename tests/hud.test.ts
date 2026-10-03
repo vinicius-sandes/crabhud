@@ -1,0 +1,205 @@
+import { expect, mock, test } from 'claude-code/testing'
+
+const now = Date.now()
+const reading = (fivePct: number, weekPct: number) => ({
+  context: { tokens: 312000, window: 1000000, percent: 31 },
+  rateLimits: [
+    { kind: 'five_hour', percentUsed: fivePct, resetsAt: new Date(now + 160 * 60000).toISOString() },
+    { kind: 'seven_day', percentUsed: weekPct, resetsAt: new Date(now + 31 * 3600000).toISOString() },
+  ],
+  cost: { usd: 4.32 },
+  changed: ['context', 'rateLimits', 'cost'] as ('context' | 'rateLimits' | 'cost')[],
+})
+const measure = reading(20, 58)
+const SHARED = '/home/me/.claude/pixel-hud-limits.json'
+
+const BAND = {
+  component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 100 },
+} as const
+
+// The world beneath the plugin: a clock, a store, an environment, and a small
+// disk in memory (the engine hands paths over in the platform's spelling).
+function world(on: any, env: Record<string, string> = {}, files: Map<string, string> = new Map()) {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+  for (const [p, text] of [...files]) {
+    files.delete(p)
+    files.set(norm(p), text)
+  }
+  const mtimes = new Map<string, number>()
+  let writes = 1
+  const clock = mock.clock(on, { now })
+  mock.store(on)
+  mock.env(on, { HOME: '/home/me', ...env })
+  on('session.measure', (_$: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
+  on('fs.read', ((_$: unknown, e: { path: string }) =>
+    files.has(norm(e.path)) ? { value: files.get(norm(e.path)) } : { deny: 'no such file' }) as any)
+  on('fs.write', ((_$: unknown, e: { path: string; text: string }) => {
+    files.set(norm(e.path), e.text)
+    mtimes.set(norm(e.path), ++writes)
+    return { value: undefined }
+  }) as any)
+  on('fs.stat', ((_$: unknown, e: { path: string }) => {
+    const text = files.get(norm(e.path))
+    return text === undefined
+      ? { deny: 'no such file' }
+      : { value: { kind: 'file', size: text.length, mtimeMs: mtimes.get(norm(e.path)) ?? 1 } }
+  }) as any)
+  on('fs.list', ((_$: unknown, e: { path: string }) => {
+    const dir = `${norm(e.path)}/`
+    const kinds = new Map<string, string>()
+    for (const p of files.keys()) {
+      if (!p.startsWith(dir)) continue
+      const [name, ...rest] = p.slice(dir.length).split('/')
+      kinds.set(name, rest.length > 0 ? 'dir' : 'file')
+    }
+    return { value: [...kinds].map(([name, kind]) => ({ name, kind, size: 0 })) }
+  }) as any)
+  // Another chat writing to the shared file (a new text, a newer mtime), and
+  // the clock the plugin's timers run on.
+  const otherChatWrites = (path: string, text: string) => {
+    files.set(norm(path), text)
+    mtimes.set(norm(path), ++writes)
+  }
+  return { otherChatWrites, clock }
+}
+
+async function shown(ui: any): Promise<string> {
+  const texts = await ui.findAll({ type: 'Text', in: 'hud' })
+  return texts.map((t: { text: string }) => t.text).join('')
+}
+
+// session.start with an engine beneath it: what a chat sees when it opens.
+async function start($: any, on: any) {
+  on('session.start', (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: {} }) as any)
+  on('session.usage', () => ({ value: { startedAt: 0, ...measure } }) as any)
+  on('session.model', () => ({ value: 'claude-opus-5-5' }) as any)
+  on('session.id', () => ({ value: 'sess-1' }) as any)
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+}
+
+test('desktop bars fill in proportion to the percentage', async ($, on) => {
+  world(on)
+  await $.session.measure(measure)
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  await ui.resize({ columns: 100, rows: 4, in: 'hud' })
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+  const texts = await ui.findAll({ type: 'Text', in: 'hud' })
+  const runs: string[] = texts.map((t: any) => t.text).filter((t: string) => /^[█▓▒·]$/.test(t))
+  const n = runs.length / 3
+  const bars = [runs.slice(0, n), runs.slice(n, 2 * n), runs.slice(2 * n)]
+  const filled = bars.map(b => b.filter(c => c !== '·').length / n)
+  console.log(`cells per bar ${n}, filled ${filled.map(f => Math.round(f * 100)).join('/')}`)
+  expect(Math.abs(filled[0] - 0.31) < 0.06).toBe(true)
+  expect(Math.abs(filled[1] - 0.2) < 0.06).toBe(true)
+  expect(Math.abs(filled[2] - 0.58) < 0.08).toBe(true)
+  await ui.unmount()
+})
+
+test("another chat's newer limits reading wins; this chat's context stays its own", async ($, on) => {
+  const { otherChatWrites, clock } = world(on)
+  await start($, on)
+  // A response in this chat: its reading goes out to the other chats.
+  await $.session.measure(reading(92, 58))
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+  expect(await shown(ui)).toContain('92%')
+  // Then another chat, later, sees the 5-hour window at 97%.
+  otherChatWrites(SHARED, JSON.stringify({
+    limits: [
+      { kind: 'five_hour', percent: 97, resetsAt: now + 100 * 60000 },
+      { kind: 'seven_day', percent: 60, resetsAt: now + 31 * 3600000 },
+    ],
+    at: now + 60000,
+  }))
+  await clock.advance(600)
+  const line = await shown(ui)
+  console.log(`after another chat: ${line}`)
+  expect(line).toContain('97%')
+  expect(line).toContain('31%')
+  await ui.unmount()
+})
+
+test('labels follow the language option', { options: { language: 'pt-BR' } }, async ($, on) => {
+  world(on)
+  await $.session.measure(measure)
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  await ui.resize({ columns: 100, rows: 4, in: 'hud' })
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+  const open = await shown(ui)
+  console.log(`pt-BR expanded: ${open}`)
+  expect(open).toContain('contexto')
+  expect(open).toContain('reseta em')
+  await ui.unmount()
+})
+
+test('ultracode shimmers behind the band and stays readable', async ($, on) => {
+  // The desktop app's record of this chat, with Ultracode switched on.
+  const files = new Map<string, string>()
+  files.set('C:/fake/Claude/claude-code-sessions/org/acct/local_1.json', JSON.stringify({
+    cliSessionId: 'sess-1',
+    model: 'claude-opus-5-5',
+    effort: 'xhigh',
+    sessionSettings: { ultracode: true },
+  }))
+  world(on, { APPDATA: 'C:/fake' }, files)
+  await start($, on)
+  await $.session.measure(measure)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    await ui.resize({ columns: 100, rows: 1, in: 'hud' })
+    const a = await shown(ui)
+    await ui.advance(1000)
+    const b = await shown(ui)
+    console.log(`${surface} ultracode: ${b}`)
+    expect(b).toContain('Ultracode')
+    expect(b).toContain('$4.32')
+    expect(a === b).toBe(false)
+    // The bars take the Ultracode palette: several colours, and they flow.
+    const barColors = async () =>
+      (await ui.findAll({ type: 'Text', in: 'hud' }))
+        .filter((t: any) => /^[█▓▒]+$/.test(t.text) && t.props.color)
+        .map((t: any) => String(t.props.color))
+    const c1 = await barColors()
+    await ui.advance(400)
+    const c2 = await barColors()
+    expect(new Set(c1).size > 1).toBe(true)
+    expect(c1.join() === c2.join()).toBe(false)
+    await ui.unmount()
+  }
+})
+
+test('compact fits every width and the cost is never cut', async ($, on) => {
+  world(on)
+  await $.session.measure(measure)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    for (const columns of [140, 100, 80, 60, 45]) {
+      await ui.resize({ columns, rows: 1, in: 'hud' })
+      const line = await shown(ui)
+      console.log(`${surface} ${columns}: ${line} (${line.length})`)
+      expect(line).toContain('$4.32')
+      expect(line.length <= columns).toBe(true)
+    }
+    await ui.unmount()
+  }
+})
+
+test('a click anywhere expands, another collapses', async ($, on) => {
+  world(on)
+  await $.session.measure(measure)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    await ui.resize({ columns: 100, rows: 4, in: 'hud' })
+    await ui.pointer({ type: 'down', x: 40, y: 0, button: 'left', in: 'hud' })
+    const open = await shown(ui)
+    console.log(`${surface} expanded: ${open}`)
+    expect(open).toContain('context')
+    expect(open).toContain('resets in')
+    expect(open).toContain('account')
+    await ui.pointer({ type: 'down', x: 5, y: 2, button: 'left', in: 'hud' })
+    expect(await shown(ui)).not.toContain('context')
+    await ui.unmount()
+  }
+})
