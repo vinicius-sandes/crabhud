@@ -341,8 +341,17 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       { seg: { t: pctText(l?.percent ?? null), bold: true } },
       ...(withReset && l?.resetsAt != null ? [{ seg: { t: `↻ ${fmtLeft(l.resetsAt - now, true, W.now)}`, dim: true } }] : []),
     ]
+    // The status glyph sits in a box of fixed width: in the desktop's
+    // proportional font each spinner frame (and the ✓) is a different width,
+    // and a bare glyph would nudge the whole row on every frame.
+    const statusW = desktop ? 2 : 1
+    const statusEl = (
+      <Box key="status" width={statusW} flexShrink={0}>
+        {text(status)}
+      </Box>
+    )
     const build = (n: number, resets: boolean, head: boolean): Piece[][] => [
-      [{ seg: status }, { seg: { t: props.model, bold: true } }, ...(head ? [{ el: effort, w: ultra || (theme && !desktop) ? effortText.length + 1 : est(effortText) }] : [])],
+      [{ el: statusEl, w: statusW }, { seg: { t: props.model, bold: true } }, ...(head ? [{ el: effort, w: ultra || (theme && !desktop) ? effortText.length + 1 : est(effortText) }] : [])],
       [
         { seg: { t: 'ctx', dim: true } },
         ...(n > 0 ? [{ bar: { p: ctxP, n, base: PURPLE } }] : []),

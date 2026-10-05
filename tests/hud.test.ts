@@ -225,6 +225,36 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
   }
 })
 
+test('compact: the spinner turns in a box of fixed width, so the row never moves', async ($, on) => {
+  world(on)
+  await start($, on)
+  await $.session.measure(measure)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const status = async (ui: any) => {
+      const box = await ui.find({ type: 'Box', key: 'status', in: 'hud' })
+      return { width: box?.props.width, glyph: box?.text }
+    }
+    // Idle: the ✓, in the same box the spinner will turn in.
+    const idle = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    await idle.resize({ columns: 100, rows: 1, in: 'hud' })
+    const ready = await status(idle)
+    await idle.unmount()
+    expect(ready.glyph).toBe('✓')
+
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+    await ui.resize({ columns: 100, rows: 1, in: 'hud' })
+    const frames = []
+    for (let i = 0; i < 6; i++) {
+      frames.push(await status(ui))
+      await ui.advance(200)
+    }
+    console.log(`${surface} spinner: ${frames.map(f => `${f.glyph}@${f.width}`).join(' ')}`)
+    expect(new Set(frames.map(f => f.glyph)).size > 1).toBe(true)
+    expect(frames.every(f => typeof f.width === 'number' && f.width === ready.width)).toBe(true)
+    await ui.unmount()
+  }
+})
+
 test('a click anywhere expands, another collapses', async ($, on) => {
   world(on)
   await start($, on)
