@@ -27,7 +27,7 @@ When the context or a limit crosses 90%, you get a toast.
 
 ## Install
 
-Works in the Claude desktop app (Code tab) and in the Claude Code terminal, on Windows and macOS.
+Works in the Claude desktop app (Code tab) and in the Claude Code terminal, on Windows, macOS, and Linux. On Linux the HUD reads the app's records from `$XDG_CONFIG_HOME` (or `~/.config`), and in the terminal it works the same as anywhere else.
 
 1. Clone the repository into your mods folder:
 

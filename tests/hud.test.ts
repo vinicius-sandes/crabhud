@@ -319,3 +319,27 @@ test('terminal: effort from settings and /effort; xhigh purple, max every colour
   expect([...new Set(await barColors())].every(c => purple.includes(c))).toBe(true)
   await ui.unmount()
 })
+
+test('linux: the record under XDG_CONFIG_HOME, the shared limits under ~/.claude', async ($, on) => {
+  // A Linux home: no APPDATA, a custom XDG config folder holding the app's
+  // record of this chat.
+  const files = new Map<string, string>()
+  files.set('/home/me/.cfg/Claude/claude-code-sessions/org/acct/local_1.json', JSON.stringify({
+    cliSessionId: 'sess-1',
+    model: 'claude-sonnet-5-5',
+    effort: 'medium',
+    sessionSettings: { ultracode: false },
+  }))
+  world(on, { XDG_CONFIG_HOME: '/home/me/.cfg' }, files)
+  await start($, on)
+  await $.session.measure(reading(25, 58))
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+  const line = await shown(ui)
+  console.log(`linux: ${line}`)
+  expect(line).toContain('Sonnet 5.5')
+  expect(line).toContain('Medium')
+  // The limits went out to the other chats through ~/.claude.
+  expect(JSON.parse(files.get(SHARED) ?? 'null')?.limits?.[0]?.percent).toBe(25)
+  await ui.unmount()
+})

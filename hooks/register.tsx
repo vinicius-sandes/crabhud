@@ -106,15 +106,20 @@ async function setUltra($: EngineInterface, value: boolean): Promise<void> {
   if ((await read($, ultraA)) !== value) await update($, ultraA, () => value)
 }
 
+// Where the desktop app keeps its records, per system: Windows' APPDATA,
+// macOS's Application Support, and on Linux the XDG config folder
+// (XDG_CONFIG_HOME, ~/.config when unset).
 async function findRecord($: EngineInterface): Promise<string | null> {
-  const [appData, home, id] = await Promise.all([
+  const [appData, home, xdgConfig, id] = await Promise.all([
     $.env.get('APPDATA'),
     $.env.get('HOME'),
+    $.env.get('XDG_CONFIG_HOME'),
     $.session.id(),
   ])
   const roots = [
     appData && `${appData}/Claude/claude-code-sessions`,
     home && `${home}/Library/Application Support/Claude/claude-code-sessions`,
+    xdgConfig && `${xdgConfig}/Claude/claude-code-sessions`,
     home && `${home}/.config/Claude/claude-code-sessions`,
   ].filter((r): r is string => Boolean(r))
   const dirs = async (path: string) =>
