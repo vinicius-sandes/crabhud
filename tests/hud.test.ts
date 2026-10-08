@@ -343,3 +343,23 @@ test('linux: the record under XDG_CONFIG_HOME, the shared limits under ~/.claude
   expect(JSON.parse(files.get(SHARED) ?? 'null')?.limits?.[0]?.percent).toBe(25)
   await ui.unmount()
 })
+
+for (const lang of ['en', 'pt-BR'] as const) {
+  test(`a Remote Control viewer (no Client) gets the still compact row, marked remote (${lang})`, async ($, on) => {
+    world(on, {}, new Map(), { language: lang })
+    await start($, on)
+    await $.session.measure(measure)
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'mobile', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+    const line = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join(' ')
+    console.log(`mobile ${lang}: ${line}`)
+    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
+    expect(line).toContain(lang === 'en' ? 'Remote Control: ON' : 'Remote Control: ATIVO')
+    for (const s of ['Opus 5.5', 'ctx', '31%', '5h', '20%', '↻', '7d', '58%', '$4.32', '✻']) expect(line).toContain(s)
+    await ui.unmount()
+    // The computer running the chat keeps its own HUD, with no remote mark.
+    const home = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+    expect(await home.findAll({ type: 'Client' })).toHaveLength(1)
+    expect(await home.findAll({ type: 'Text', text: 'Remote Control' })).toHaveLength(0)
+    await home.unmount()
+  })
+}

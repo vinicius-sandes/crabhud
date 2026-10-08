@@ -18,6 +18,10 @@ The loudest settings get their own look, following each surface's own effort pic
 
 When the context or a limit crosses 90%, you get a toast.
 
+## Remote Control
+
+Following a chat through Remote Control (from the phone or another computer), the HUD shows a still version of the compact row, marked **⇄ Remote Control: ON**: the same model, effort, context, limits and cost, in the same colours, refreshed with every new reading, without the animations (each frame would have to cross the connection). The computer running the chat keeps the full HUD. The mod only needs to be installed on that computer.
+
 ## How it stays live
 
 - **Context and cost** refresh after every model response, not only when a turn ends.

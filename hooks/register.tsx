@@ -306,6 +306,71 @@ async function pullTerminal($: EngineInterface) {
   await setUltra($, sessionUltra ?? workflows === true)
 }
 
+// A surface with no Client (a Remote Control viewer: the mobile app, another
+// computer) gets the compact row drawn here, still: no animation, since each
+// frame would cross the connection, and a mark saying the chat is remote.
+const RC = { green: '#3FB68B', purple: '#8B83E6', amber: '#E9A23B', red: '#E5534B', orange: '#D97757', pink: '#F25F8B' }
+const RC_EFFORT: Record<string, string> = { low: '#9AA0A8', medium: '#5AA9E6', high: RC.purple, xhigh: '#C86DD7', max: RC.pink }
+const RC_WORDS = {
+  en: { remote: 'Remote Control: ON', efforts: { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' } as Record<string, string> },
+  'pt-BR': { remote: 'Remote Control: ATIVO', efforts: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string> },
+}
+
+function remoteBand(els: { Box: any; Text: any }, p: HudProps) {
+  const { Box, Text } = els
+  const W = RC_WORDS[p.lang] ?? RC_WORDS.en
+  const T = TEXT[p.lang] ?? TEXT.en
+  const tone = (v: number, base: string) => (v >= 90 ? RC.red : v >= 70 ? RC.amber : base)
+  const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v)}%`)
+  // The same pixels as the HUD: solid, a dithered edge, dots after.
+  const bar = (v: number | null, base: string) => {
+    const n = 8
+    const filled = Math.min(n, Math.round(((v ?? 0) / 100) * n))
+    const edge = filled < n && filled >= 2 ? '▒' : ''
+    const solid = '█'.repeat(filled - edge.length)
+    return (
+      <Box flexDirection="row">
+        <Text color={tone(v ?? 0, base)}>{solid + edge}</Text>
+        <Text dimColor>{'·'.repeat(n - filled)}</Text>
+      </Box>
+    )
+  }
+  const limits = p.limits.map(l => (l.resetsAt !== null && l.resetsAt <= p.now ? { ...l, percent: 0, resetsAt: null } : l))
+  const ctxP = p.chat?.ctxPercent ?? null
+  const alert = [ctxP ?? 0, ...limits.map(l => l.percent)].some(v => v >= 90)
+  const status = p.working ? { t: '✻', c: RC.orange } : alert ? { t: '!', c: RC.red } : { t: '✓', c: RC.green }
+  const gauge = (label: string, v: number | null, base: string, after?: string) => (
+    <Box flexDirection="row" columnGap={1} alignItems="center">
+      <Text dimColor>{label}</Text>
+      {bar(v, base)}
+      <Text bold>{pct(v)}</Text>
+      {after ? <Text dimColor>{after}</Text> : []}
+    </Box>
+  )
+  const limit = (kind: string, label: string) => {
+    const l = limits.find(x => x.kind === kind)
+    return gauge(label, l?.percent ?? null, RC.green, l?.resetsAt != null ? `↻ ${fmtLeft(l.resetsAt - p.now, T.now).replace(/ /g, '')}` : undefined)
+  }
+  const level = p.effort === null ? null : (W.efforts[p.effort] ?? p.effort)
+  const cost = p.chat?.costUsd != null ? `$${p.chat.costUsd.toFixed(2)}` : '$—'
+
+  return (
+    <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+      <Text bold color={RC.purple}>⇄ {W.remote}</Text>
+      <Box flexDirection="row" columnGap={1} alignItems="center">
+        <Text color={status.c} bold>{status.t}</Text>
+        <Text bold>{p.model}</Text>
+        {level !== null ? <Text color={(p.effort && RC_EFFORT[p.effort]) || RC.purple}>{level}</Text> : []}
+        {p.ultracode ? <Text bold color={RC.pink}>Ultracode</Text> : []}
+      </Box>
+      {gauge('ctx', ctxP, RC.purple)}
+      {limit('five_hour', '5h')}
+      {limit('seven_day', '7d')}
+      <Text bold>{cost}</Text>
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'hud', description: COMMAND })
@@ -434,8 +499,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey || (await read($, hiddenA))) return next(e)
 
     const els = $.ui.resolve(e)
-    if (!('Client' in els)) return next(e)
-    const { Box, Button, Client, Text } = els
+    const { Box, Button, Text } = els
 
     // First run: ask for the language, in English, once.
     const lang = await read($, langA)
@@ -463,6 +527,12 @@ export const register: Register = on => {
       now: await $.clock.now(),
     }
 
-    return <Client key="hud" module="./hud-client.tsx" width="100%" props={props} />
+    // Only the terminal and the desktop draw a Client; every other surface
+    // (a Remote Control viewer) gets the still row.
+    if ((e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in els) {
+      const { Client } = els
+      return <Client key="hud" module="./hud-client.tsx" width="100%" props={props} />
+    }
+    return remoteBand(els, props)
   })
 }
