@@ -345,21 +345,56 @@ test('linux: the record under XDG_CONFIG_HOME, the shared limits under ~/.claude
 })
 
 for (const lang of ['en', 'pt-BR'] as const) {
-  test(`a Remote Control viewer (no Client) gets the still compact row, marked remote (${lang})`, async ($, on) => {
+  test(`a Remote Control viewer (no Client) gets two still lines, marked remote (${lang})`, async ($, on) => {
     world(on, {}, new Map(), { language: lang })
     await start($, on)
     await $.session.measure(measure)
     const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'mobile', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
+    // First line: the mark alone, small, its last word green.
+    const mark = await ui.find({ type: 'Svg' })
+    const word = lang === 'en' ? 'ON' : 'ATIVO'
+    expect(mark?.props.alt).toBe(`Remote Control: ${word}`)
+    expect(String(mark?.props.source)).toContain(`fill="#3FB68B">${word}</text>`)
+    expect(String(mark?.props.source)).toContain('font-size="11"')
+    // Second line: the row, on one line, never wrapping.
+    const drawn: any = await ui.drawn()
+    expect(drawn.props.flexDirection).toBe('column')
+    expect(drawn.children).toHaveLength(2)
     const line = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join(' ')
     console.log(`mobile ${lang}: ${line}`)
-    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
-    expect(line).toContain(lang === 'en' ? 'Remote Control: ON' : 'Remote Control: ATIVO')
+    expect(line).not.toContain('Remote Control')
     for (const s of ['Opus 5.5', 'ctx', '31%', '5h', '20%', '↻', '7d', '58%', '$4.32', '✻']) expect(line).toContain(s)
     await ui.unmount()
     // The computer running the chat keeps its own HUD, with no remote mark.
     const home = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
     expect(await home.findAll({ type: 'Client' })).toHaveLength(1)
-    expect(await home.findAll({ type: 'Text', text: 'Remote Control' })).toHaveLength(0)
+    expect(await home.findAll({ type: 'Svg' })).toHaveLength(0)
     await home.unmount()
   })
 }
+
+test('the remote row shrinks to a narrow width and keeps the cost', async ($, on) => {
+  world(on)
+  await start($, on)
+  await $.session.measure(measure)
+  for (const bodyColumns of [100, 70, 50]) {
+    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'mobile', ...BAND, props: { ...BAND.props, bodyColumns } } as any)
+    const texts = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+    console.log(`mobile ${bodyColumns}: ${texts.join(' ')}`)
+    // Laid out: one cell between a group's pieces, three around each │.
+    const drawn: any = await ui.drawn()
+    const row = drawn.children[1]
+    const width = (el: any): number => {
+      if (typeof el === 'string') return el.length
+      const kids = (el.children ?? []).map(width).reduce((a: number, b: number) => a + b, 0)
+      const gap = (el.props?.columnGap ?? 0) * Math.max(0, (el.children ?? []).length - 1)
+      return kids + gap + 2 * (el.props?.marginX ?? 0)
+    }
+    console.log(`  laid out ${width(row)} of ${bodyColumns}`)
+    expect(width(row) <= bodyColumns).toBe(true)
+    expect(texts.join('')).toContain('$4.32')
+    expect(texts.filter(t => t === '│')).toHaveLength(4)
+    await ui.unmount()
+  }
+})

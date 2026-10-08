@@ -308,28 +308,52 @@ async function pullTerminal($: EngineInterface) {
 
 // A surface with no Client (a Remote Control viewer: the mobile app, another
 // computer) gets the compact row drawn here, still: no animation, since each
-// frame would cross the connection, and a mark saying the chat is remote.
+// frame would cross the connection. Two lines: a small mark saying the chat
+// is remote, then the row, which shrinks to fit and never wraps.
 const RC = { green: '#3FB68B', purple: '#8B83E6', amber: '#E9A23B', red: '#E5534B', orange: '#D97757', pink: '#F25F8B' }
 const RC_EFFORT: Record<string, string> = { low: '#9AA0A8', medium: '#5AA9E6', high: RC.purple, xhigh: '#C86DD7', max: RC.pink }
+// The mark's own colours: the HUD's purple and green, and a cyan of its own;
+// each with a deeper tone for a light theme.
+const RC_MARK = {
+  dark: { symbol: RC.purple, label: '#3CC6D9', on: RC.green },
+  light: { symbol: '#6E64D8', label: '#0E8FA3', on: '#2A9A70' },
+}
 const RC_WORDS = {
-  en: { remote: 'Remote Control: ON', efforts: { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' } as Record<string, string> },
-  'pt-BR': { remote: 'Remote Control: ATIVO', efforts: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string> },
+  en: { remote: 'Remote Control:', on: 'ON', efforts: { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' } as Record<string, string> },
+  'pt-BR': { remote: 'Remote Control:', on: 'ATIVO', efforts: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string> },
 }
 
-function remoteBand(els: { Box: any; Text: any }, p: HudProps) {
-  const { Box, Text } = els
+// The mark as a small vector line: Text has no size of its own, and the mark
+// is meant to read smaller than the row (the ⇄ larger, the words at 11px).
+function remoteMark(remote: string, on: string): string {
+  const x = 20
+  const onX = x + Math.ceil((remote.length + 1) * 6.7)
+  const width = onX + Math.ceil(on.length * 6.7) + 2
+  const { dark, light } = RC_MARK
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="18" viewBox="0 0 ${width} 18">` +
+    `<style>@media (prefers-color-scheme: light){.s{fill:${light.symbol}}.l{fill:${light.label}}.o{fill:${light.on}}}</style>` +
+    `<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="600">` +
+    `<text class="s" x="0" y="14" font-size="15" fill="${dark.symbol}">⇄</text>` +
+    `<text class="l" x="${x}" y="13" font-size="11" fill="${dark.label}">${remote}</text>` +
+    `<text class="o" x="${onX}" y="13" font-size="11" fill="${dark.on}">${on}</text>` +
+    `</g></svg>`
+  )
+}
+
+function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, columns: number) {
+  const { Box, Text, Svg } = els
   const W = RC_WORDS[p.lang] ?? RC_WORDS.en
   const T = TEXT[p.lang] ?? TEXT.en
   const tone = (v: number, base: string) => (v >= 90 ? RC.red : v >= 70 ? RC.amber : base)
   const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v)}%`)
   // The same pixels as the HUD: solid, a dithered edge, dots after.
-  const bar = (v: number | null, base: string) => {
-    const n = 8
+  const bar = (v: number | null, n: number, base: string) => {
     const filled = Math.min(n, Math.round(((v ?? 0) / 100) * n))
     const edge = filled < n && filled >= 2 ? '▒' : ''
     const solid = '█'.repeat(filled - edge.length)
     return (
-      <Box flexDirection="row">
+      <Box flexDirection="row" flexShrink={0}>
         <Text color={tone(v ?? 0, base)}>{solid + edge}</Text>
         <Text dimColor>{'·'.repeat(n - filled)}</Text>
       </Box>
@@ -339,34 +363,80 @@ function remoteBand(els: { Box: any; Text: any }, p: HudProps) {
   const ctxP = p.chat?.ctxPercent ?? null
   const alert = [ctxP ?? 0, ...limits.map(l => l.percent)].some(v => v >= 90)
   const status = p.working ? { t: '✻', c: RC.orange } : alert ? { t: '!', c: RC.red } : { t: '✓', c: RC.green }
-  const gauge = (label: string, v: number | null, base: string, after?: string) => (
-    <Box flexDirection="row" columnGap={1} alignItems="center">
-      <Text dimColor>{label}</Text>
-      {bar(v, base)}
-      <Text bold>{pct(v)}</Text>
-      {after ? <Text dimColor>{after}</Text> : []}
-    </Box>
-  )
-  const limit = (kind: string, label: string) => {
-    const l = limits.find(x => x.kind === kind)
-    return gauge(label, l?.percent ?? null, RC.green, l?.resetsAt != null ? `↻ ${fmtLeft(l.resetsAt - p.now, T.now).replace(/ /g, '')}` : undefined)
-  }
   const level = p.effort === null ? null : (W.efforts[p.effort] ?? p.effort)
   const cost = p.chat?.costUsd != null ? `$${p.chat.costUsd.toFixed(2)}` : '$—'
+  const resetOf = (l: HudLimit | undefined) =>
+    l?.resetsAt != null ? `↻${fmtLeft(l.resetsAt - p.now, T.now).replace(/ /g, '')}` : ''
+  const five = limits.find(l => l.kind === 'five_hour')
+  const week = limits.find(l => l.kind === 'seven_day')
+
+  // Fit the row to the width, as the HUD's compact row does: shorter bars
+  // first, then no reset times, then no effort; the cost is never cut. The
+  // groups are parted by the HUD's │, one space each side.
+  const SEP = 3
+  const headText = [p.model, level, p.ultracode ? 'Ultracode' : null]
+  const widthOf = (n: number, resets: boolean, head: boolean) => {
+    const gauge = (label: string, v: number | null, after: string) =>
+      label.length + (n > 0 ? 1 + n : 0) + 1 + pct(v).length + (resets && after ? 1 + after.length : 0)
+    const headW = 2 + (head ? headText : [p.model]).filter(Boolean).join(' ').length
+    return headW + gauge('ctx', ctxP, '') + gauge('5h', five?.percent ?? null, resetOf(five)) +
+      gauge('7d', week?.percent ?? null, resetOf(week)) + cost.length + SEP * 4
+  }
+  let fit = { n: 0, resets: false, head: false }
+  search: for (const [resets, head, min] of [[true, true, 4], [false, true, 3], [false, false, 3], [false, false, 0]] as const) {
+    for (let n = 8; n >= min; n--) {
+      if (widthOf(n, resets, head) <= columns) {
+        fit = { n, resets, head }
+        break search
+      }
+    }
+  }
+  const gauge = (label: string, v: number | null, base: string, after: string) => (
+    <Box flexDirection="row" columnGap={1} alignItems="center" flexShrink={0}>
+      <Text dimColor>{label}</Text>
+      {fit.n > 0 ? bar(v, fit.n, base) : []}
+      <Text bold>{pct(v)}</Text>
+      {fit.resets && after ? <Text dimColor>{after}</Text> : []}
+    </Box>
+  )
+  const sep = () => (
+    <Box marginX={1} flexShrink={0}>
+      <Text dimColor>│</Text>
+    </Box>
+  )
+  const mark = Svg ? (
+    <Svg source={remoteMark(W.remote, W.on)} alt={`${W.remote} ${W.on}`} />
+  ) : (
+    <Box flexDirection="row" columnGap={1}>
+      <Text bold color={RC_MARK.dark.symbol}>⇄</Text>
+      <Text color={RC_MARK.dark.label}>{W.remote}</Text>
+      <Text bold color={RC_MARK.dark.on}>{W.on}</Text>
+    </Box>
+  )
 
   return (
-    <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
-      <Text bold color={RC.purple}>⇄ {W.remote}</Text>
-      <Box flexDirection="row" columnGap={1} alignItems="center">
-        <Text color={status.c} bold>{status.t}</Text>
-        <Text bold>{p.model}</Text>
-        {level !== null ? <Text color={(p.effort && RC_EFFORT[p.effort]) || RC.purple}>{level}</Text> : []}
-        {p.ultracode ? <Text bold color={RC.pink}>Ultracode</Text> : []}
+    <Box flexDirection="column" width="100%">
+      {mark}
+      <Box flexDirection="row" alignItems="center" width="100%">
+        <Box flexDirection="row" flexWrap="nowrap" overflow="hidden" flexShrink={1} minWidth={0} alignItems="center">
+          <Box flexDirection="row" columnGap={1} alignItems="center" flexShrink={0}>
+            <Text color={status.c} bold>{status.t}</Text>
+            <Text bold>{p.model}</Text>
+            {fit.head && level !== null ? <Text color={(p.effort && RC_EFFORT[p.effort]) || RC.purple}>{level}</Text> : []}
+            {fit.head && p.ultracode ? <Text bold color={RC.pink}>Ultracode</Text> : []}
+          </Box>
+          {sep()}
+          {gauge('ctx', ctxP, RC.purple, '')}
+          {sep()}
+          {gauge('5h', five?.percent ?? null, RC.green, resetOf(five))}
+          {sep()}
+          {gauge('7d', week?.percent ?? null, RC.green, resetOf(week))}
+        </Box>
+        {sep()}
+        <Box flexShrink={0}>
+          <Text bold>{cost}</Text>
+        </Box>
       </Box>
-      {gauge('ctx', ctxP, RC.purple)}
-      {limit('five_hour', '5h')}
-      {limit('seven_day', '7d')}
-      <Text bold>{cost}</Text>
     </Box>
   )
 }
@@ -533,6 +603,6 @@ export const register: Register = on => {
       const { Client } = els
       return <Client key="hud" module="./hud-client.tsx" width="100%" props={props} />
     }
-    return remoteBand(els, props)
+    return remoteBand(els, props, e.props.bodyColumns || 80)
   })
 }
