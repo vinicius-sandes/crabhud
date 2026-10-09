@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionRateLimit, SessionUsage } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, SessionRateLimit, SessionUsage } from 'claude-code'
 
 import type { HudChat, HudLang, HudLimit, HudLimits, HudProps } from '../types'
 
@@ -571,16 +571,28 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
 
+    // The band is shared: what the other mods draw stays, above the HUD.
+    const theirs = await next(e)
+    const below = (hud: RenderElement) =>
+      theirs ? (
+        <Box flexDirection="column">
+          {theirs}
+          {hud}
+        </Box>
+      ) : (
+        hud
+      )
+
     // First run: ask for the language, in English, once.
     const lang = await read($, langA)
     if (lang === null) {
-      return (
+      return below(
         <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
           <Text bold>Choose the HUD language:</Text>
           <Button key="lang-en" label="English" hotkey="1" onPress={() => chooseLanguage($, 'en')} />
           <Button key="lang-pt-BR" label="Português (BR)" hotkey="2" onPress={() => chooseLanguage($, 'pt-BR')} />
           <Text dimColor>You can change it anytime with /hud language</Text>
-        </Box>
+        </Box>,
       )
     }
 
@@ -601,8 +613,8 @@ export const register: Register = on => {
     // (a Remote Control viewer) gets the still row.
     if ((e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in els) {
       const { Client } = els
-      return <Client key="hud" module="./hud-client.tsx" width="100%" props={props} />
+      return below(<Client key="hud" module="./hud-client.tsx" width="100%" props={props} />)
     }
-    return remoteBand(els, props, e.props.bodyColumns || 80)
+    return below(remoteBand(els, props, e.props.bodyColumns || 80))
   })
 }

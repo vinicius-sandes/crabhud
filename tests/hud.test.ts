@@ -13,6 +13,9 @@ const reading = (fivePct: number, weekPct: number) => ({
 const measure = reading(20, 58)
 const SHARED = '/home/me/.claude/pixel-hud-limits.json'
 
+// What the mods beneath draw in the band; nothing unless a test says so.
+let beneath: ((ui: any) => unknown) | null = null
+
 const BAND = {
   component: 'AbovePrompt',
   props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 100 },
@@ -37,6 +40,12 @@ function world(
   const clock = mock.clock(on, { now })
   mock.store(on, store)
   on('settings.read', () => ({ value: settings }) as any)
+  beneath = null
+  // The engine's own band is empty here; a test's mods beneath draw into it.
+  on('ui.render', (($: any, e: any) => {
+    const ui = $.ui.resolve(e)
+    return beneath ? beneath(ui) : ui.Box({})
+  }) as any)
   mock.env(on, { HOME: '/home/me', ...env })
   on('session.measure', (_$: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
   on('fs.read', ((_$: unknown, e: { path: string }) =>
@@ -397,4 +406,16 @@ test('the remote row shrinks to a narrow width and keeps the cost', async ($, on
     expect(texts.filter(t => t === '│')).toHaveLength(4)
     await ui.unmount()
   }
+})
+
+test("another mod's row in the band stays beside the HUD", async ($, on) => {
+  world(on)
+  await start($, on)
+  await $.session.measure(measure)
+  beneath = ui => ui.Text({ key: 'other-mod', children: ['savvy: 2/5'] })
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+  expect((await ui.find({ type: 'Text', text: /savvy/ }))?.text).toBe('savvy: 2/5')
+  expect(await shown(ui)).toContain('31%')
+  await ui.unmount()
 })
