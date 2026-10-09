@@ -40,6 +40,13 @@ export type AgentRun = {
   stepNote?: string
 }
 
+/** The main agent's tool in flight, for the crab's mood. */
+export type Activity = {
+  id: string
+  kind: 'read' | 'search' | 'web' | 'write' | 'run' | 'other'
+  target: string
+}
+
 export type Panel = {
   isCompact: boolean
   isDoneCollapsed: boolean
@@ -53,6 +60,7 @@ declare module 'claude-code' {
       agents: AgentRun[]
       panel: Panel
       now: number
+      activity: Activity | null
     }
   }
 }

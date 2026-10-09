@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import type { AgentRun, Flow, Panel, Phase, PlannedTask } from '../types'
+import type { Activity, AgentRun, Flow, Panel, Phase, PlannedTask } from '../types'
 
 const flow = atom({ plugin: 'savvy-progress', key: 'flow' } as const, null)
 const agents = atom({ plugin: 'savvy-progress', key: 'agents' } as const, [])
@@ -11,6 +11,8 @@ const panel = atom({ plugin: 'savvy-progress', key: 'panel' } as const, {
   autoOpenedFor: '',
 })
 const now = atom({ plugin: 'savvy-progress', key: 'now' } as const, 0)
+// The main agent's tool in flight, for the crab's mood; null between tools.
+const activity = atom({ plugin: 'savvy-progress', key: 'activity' } as const, null)
 
 const TOOL = 'mcp__savvy-progress__progress'
 const STEP_TOOL = 'mcp__savvy-progress__step'
@@ -30,9 +32,9 @@ type ProgressInput = {
 
 // ---------------------------------------------------------------------------
 // Language: the `language` option, else Claude Code's `language` setting, else the
-// process locale; English when nothing says Russian.
+// process locale; English when nothing says Russian or Portuguese.
 
-type Lang = 'en' | 'ru'
+type Lang = 'en' | 'ru' | 'pt'
 
 const STRINGS = {
   en: {
@@ -62,6 +64,18 @@ const STRINGS = {
     tasks: 'Tasks',
     review: 'Review',
     busy: 'running',
+    sleep: 'sleeping',
+    sleepHint: 'waiting for the next task',
+    think: 'thinking',
+    analyze: 'analyzing',
+    work: 'working',
+    delegate: 'coordinating',
+    agentsN: (n: number) => `${n} ${n === 1 ? 'agent' : 'agents'}`,
+    reading: 'reading',
+    searching: 'searching',
+    editing: 'editing',
+    running_: 'running',
+    browsing: 'browsing',
   },
   ru: {
     pane: 'Агенты',
@@ -90,6 +104,58 @@ const STRINGS = {
     tasks: 'Задачи',
     review: 'Ревью',
     busy: 'в работе',
+    sleep: 'спит',
+    sleepHint: 'ждёт следующую задачу',
+    think: 'думает',
+    analyze: 'анализирует',
+    work: 'работает',
+    delegate: 'координирует',
+    agentsN: (n: number) => `${n} агент.`,
+    reading: 'читает',
+    searching: 'ищет',
+    editing: 'правит',
+    running_: 'запускает',
+    browsing: 'смотрит',
+  },
+  pt: {
+    pane: 'Agentes',
+    cost: 'Custo',
+    tokens: 'Tokens',
+    time: 'Tempo',
+    collapse: 'Recolher',
+    expand: 'Expandir',
+    running: 'Rodando',
+    finished: 'Concluídos',
+    planned: 'Planejados',
+    empty: 'Nenhum subagente rodando agora.',
+    round: 'rodada',
+    failed: 'erro',
+    after: 'depois de',
+    tokensWord: 'tokens',
+    agentsCount: 'agentes',
+    isRunning: 'rodando',
+    isFinished: 'concluído',
+    isPlanned: 'planejada',
+    opened: 'Painel de agentes aberto.',
+    closed: 'Painel de agentes fechado.',
+    done: 'Pronto',
+    plan: 'Plano',
+    design: 'Design',
+    tasks: 'Tarefas',
+    review: 'Revisão',
+    busy: 'rodando',
+    sleep: 'dormindo',
+    sleepHint: 'esperando a próxima tarefa',
+    think: 'pensando',
+    analyze: 'analisando',
+    work: 'trabalhando',
+    delegate: 'coordenando',
+    agentsN: (n: number) => `${n} ${n === 1 ? 'agente' : 'agentes'}`,
+    reading: 'lendo',
+    searching: 'buscando',
+    editing: 'editando',
+    running_: 'rodando',
+    browsing: 'pesquisando',
   },
 } as const
 
@@ -97,18 +163,19 @@ const STRINGS = {
 let lang: Lang = 'en'
 const tr = () => STRINGS[lang]
 
-const isRussian = (v: unknown): boolean => typeof v === 'string' && /^(ru|russian|рус)/i.test(v.trim())
+const langOf = (v: unknown): Lang | null =>
+  typeof v !== 'string' ? null : /^(ru|russian|рус)/i.test(v.trim()) ? 'ru' : /^(pt|portug)/i.test(v.trim()) ? 'pt' : null
 
 async function detectLang($: EngineInterface, option: unknown): Promise<Lang> {
-  if (option === 'en' || option === 'ru') return option
+  if (option === 'en' || option === 'ru' || option === 'pt') return option
   try {
     const settings = (await $.settings.read()) as Record<string, unknown>
-    if (typeof settings.language === 'string' && settings.language.trim()) return isRussian(settings.language) ? 'ru' : 'en'
+    if (typeof settings.language === 'string' && settings.language.trim()) return langOf(settings.language) ?? 'en'
   } catch {
     // No settings: fall through to the locale.
   }
   const locale = (await $.env.get('LC_ALL')) || (await $.env.get('LC_MESSAGES')) || (await $.env.get('LANG'))
-  return isRussian(locale) ? 'ru' : 'en'
+  return langOf(locale) ?? 'en'
 }
 
 const blank = (): Flow => ({
@@ -160,6 +227,40 @@ const label = (f: Flow): string => {
   return `${f.phase === 'review' ? s.review : s.tasks} ${count}`
 }
 
+// The crab in the corner acts out what Claude is doing right now.
+type Mood = 'sleep' | 'think' | 'analyze' | 'work' | 'delegate'
+
+const READS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead'])
+const WEB = new Set(['WebFetch', 'WebSearch'])
+const WRITES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+const RUNS = new Set(['Bash', 'PowerShell'])
+
+const kindOf = (tool: string): Activity['kind'] =>
+  READS.has(tool) ? (tool === 'Read' || tool === 'NotebookRead' ? 'read' : 'search') : WEB.has(tool) ? 'web' : WRITES.has(tool) ? 'write' : RUNS.has(tool) ? 'run' : 'other'
+
+const baseName = (p: string): string => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p
+
+// The one thing about a call worth naming: the file, the pattern, the command's first word.
+const targetOf = (input: Record<string, unknown>): string => {
+  const str = (k: string) => (typeof input[k] === 'string' ? (input[k] as string) : '')
+  const path = str('file_path') || str('notebook_path') || str('path')
+  if (path) return baseName(path)
+  if (str('command')) return str('command').trim().split(/\s+/).slice(0, 2).join(' ')
+  return str('pattern') || str('query') || str('url').replace(/^https?:\/\//, '').split('/')[0] || ''
+}
+
+const moodOf = (isWorking: boolean, running: number, act: Activity | null): Mood =>
+  running > 0 ? 'delegate' : !isWorking ? 'sleep' : !act ? 'think' : act.kind === 'write' || act.kind === 'run' || act.kind === 'other' ? 'work' : 'analyze'
+
+const moodText = (mood: Mood, running: number, act: Activity | null): string => {
+  const s = tr()
+  if (mood === 'sleep') return `${s.sleep} · ${s.sleepHint}`
+  if (mood === 'delegate') return `${s.delegate} ${s.agentsN(running)}`
+  if (mood === 'think' || !act) return `${s.think}…`
+  const verb = { read: s.reading, search: s.searching, web: s.browsing, write: s.editing, run: s.running_, other: s.running_ }[act.kind]
+  return `${mood === 'work' ? s.work : s.analyze} · ${verb}${act.target ? ' ' + act.target : ''}`
+}
+
 const ratio = (f: Flow): number => (f.isFinished ? 1 : f.total ? f.done / f.total : 0)
 
 // Deterministic noise so the dither does not shimmer between redraws.
@@ -171,9 +272,9 @@ const noise = (x: number, y: number): number => {
 // The whole row is one SVG: the desktop wraps sibling elements onto new lines,
 // so title, bar, percent and the crab live in one drawing; only the count and
 // the dismiss are Buttons beside it.
-const H = 22
+const H = 26
 const BAR_H = 16
-const CRAB_W = 26
+const CRAB_W = 28
 const CELL = 3
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
 
@@ -199,7 +300,7 @@ const fitText = (s: string, size: number, maxW: number): string => {
   return out + '…'
 }
 
-const rowSvg = (f: Flow, W: number, isWorking: boolean): string => {
+const rowSvg = (f: Flow, W: number, mood: Mood): string => {
   // The title takes what it needs, up to 40% of the row; the bar takes the rest.
   const title = fitText(f.title, 13, Math.max(60, W * 0.4))
   const BAR_X = Math.round(16 + textWidth(title, 13) + 12)
@@ -262,9 +363,16 @@ const rowSvg = (f: Flow, W: number, isWorking: boolean): string => {
 <text x="${pillX + pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-family="${FONT}" font-size="11" font-weight="600" fill="#ffffff">${xml(text)}</text>
 </g>
 <text class="m" x="${W - CRAB_W - 6}" y="${H / 2 + 4.5}" text-anchor="end" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums">${percent}</text>
-${CRAB_CSS}${crab(W - CRAB_W + 1, 0, 'other', false, isWorking, 0.8)}
+${CRAB_CSS}${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
 </svg>`
 }
+
+// No flow running: the crab and what Claude is doing, in one drawing.
+const moodSvg = (W: number, mood: Mood, text: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+<style>.t{fill:#1f1f1f}.m{fill:#8a8a8a}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>
+${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
+<text x="${CRAB_W + 8}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(text.split(' · ')[0] ?? text)}</tspan><tspan class="m">${xml(text.includes(' · ') ? ' · ' + fitText(text.split(' · ').slice(1).join(' · '), 13, W - CRAB_W - 120) : '')}</tspan></text>
+</svg>`
 
 const barText = (f: Flow, width: number): string => {
   const filled = Math.round(width * ratio(f))
@@ -284,7 +392,27 @@ const TIER_COLOR: Record<string, string> = {
 }
 
 // What each savvy tier runs on, for planned tasks that have no run yet.
-const colorOf = (tier: string): string => TIER_COLOR[tier] ?? '#888780'
+// Apoio's own agents (the apoio-edicao-base and apoio-edicao-intermediaria skills):
+// a costume and a color per role, matched by agent type.
+const ROLE_OF: Record<string, string> = {
+  'legendista-apoio': 'legendista',
+  'revisor-edicao-apoio': 'revisor',
+  'roteirista-apoio': 'roteirista',
+  'capa-apoio': 'capa',
+  'headlines-figma': 'headlines',
+  'conferente-apoio': 'conferente',
+}
+
+const ROLE_COLOR: Record<string, string> = {
+  legendista: '#D4537E',
+  revisor: '#B83A3A',
+  roteirista: '#5E8C31',
+  capa: '#2B9FB3',
+  headlines: '#9B59B6',
+  conferente: '#3F7CAC',
+}
+
+const colorOf = (tier: string): string => TIER_COLOR[tier] ?? ROLE_COLOR[tier] ?? '#888780'
 
 const TIER_MODEL: Record<string, string> = {
   fable: 'Fable · high',
@@ -408,6 +536,22 @@ const crabBody = (f: Fill, armFront = 0, armCls?: string): void => {
   f(21, 22, 2, 4, CLAY, 'lb')
 }
 
+// The body and legs alone, for a role that places its own claws; and the desk a role sits at.
+const crabTrunk = (f: Fill): void => {
+  f(7, 10, 16, 12, CLAY)
+  f(9, 12, 2, 2, INK)
+  f(19, 12, 2, 2, INK)
+  f(7, 22, 2, 4, CLAY, 'la')
+  f(17, 22, 2, 4, CLAY, 'la')
+  f(11, 22, 2, 4, CLAY, 'lb')
+  f(21, 22, 2, 4, CLAY, 'lb')
+}
+
+const desk = (f: Fill): void => {
+  f(0, 22, 30, 1, '#9C7A55', 'fr')
+  f(0, 23, 30, 2, '#7A5A3C', 'fr')
+}
+
 // Pure CSS, run by the compositor: no redraws. Periods divide one second, so the
 // once-a-second redraw of a running row restarts them in phase. Every crab walks;
 // each costume adds its prop's own motion on top.
@@ -434,6 +578,31 @@ const CRAB_CSS = `<style>
 @keyframes wave{50%{transform:skewY(-12deg) scaleX(.85)}}
 .c-explore.run .it{transform-origin:50% 100%;animation:fence .5s ease-in-out infinite}
 @keyframes fence{50%{transform:rotate(25deg)}}
+.c-legendista.run .la,.c-legendista.run .lb,.c-revisor.run .la,.c-revisor.run .lb,.c-roteirista.run .la,.c-roteirista.run .lb,
+.c-capa.run .la,.c-capa.run .lb,.c-headlines.run .la,.c-headlines.run .lb,.c-conferente.run .la,.c-conferente.run .lb{animation:none}
+.c-legendista.run .kl{animation:tap .25s steps(1) infinite}.c-legendista.run .kr{animation:tap .25s steps(1) infinite -.125s}
+@keyframes tap{50%{transform:translateY(-1px)}}
+.c-legendista.run .tx1{animation:blink 1s steps(1) infinite}.c-legendista.run .tx2{animation:blink 1s steps(1) infinite -.5s}
+.c-revisor.run .it{animation:look 1s steps(1) infinite}.c-revisor.run .gl,.c-revisor.run .mk{animation:blink .5s steps(1) infinite}
+@keyframes look{50%{transform:translate(-1px,1px)}}
+.c-roteirista.run .pn{animation:write 1s steps(1) infinite}
+.c-roteirista.run .ln{transform-origin:0 50%;animation:grow 1s steps(1) infinite}
+@keyframes write{0%{transform:translate(-8px,0)}12%{transform:translate(-7px,-1px)}25%{transform:translate(-6px,0)}37%{transform:translate(-5px,-1px)}50%{transform:translate(-4px,0)}62%{transform:translate(-3px,-1px)}75%{transform:translate(-2px,0)}87%{transform:translate(-1px,-1px)}100%{transform:translate(0,0)}}
+@keyframes grow{0%{transform:scaleX(.06)}12%{transform:scaleX(.125)}25%{transform:scaleX(.25)}37%{transform:scaleX(.375)}50%{transform:scaleX(.5)}62%{transform:scaleX(.625)}75%{transform:scaleX(.75)}87%{transform:scaleX(.875)}100%{transform:scaleX(1)}}
+.c-capa.run .fl{animation:flash 1s steps(1) infinite}@keyframes flash{0%,19%{opacity:1}20%,100%{opacity:0}}
+.c-headlines.run .br{animation:dip 1s ease-in-out infinite}
+@keyframes dip{0%,100%{transform:translate(1px,-3px)}45%,60%{transform:translate(-5px,3px)}}
+.c-conferente.run .k1{animation:c1 1s steps(1) infinite}.c-conferente.run .k2{animation:c2 1s steps(1) infinite}.c-conferente.run .k3{animation:c3 1s steps(1) infinite}
+@keyframes c1{0%,24%{opacity:0}25%,100%{opacity:1}}@keyframes c2{0%,49%{opacity:0}50%,100%{opacity:1}}@keyframes c3{0%,74%{opacity:0}75%,100%{opacity:1}}
+.c-m-sleep.run .la,.c-m-sleep.run .lb,.c-m-sleep.run .bd,.c-m-think.run .la,.c-m-think.run .lb,.c-m-analyze.run .la,.c-m-analyze.run .lb,.c-m-delegate.run .la,.c-m-delegate.run .lb{animation:none}
+.c-m-sleep.run .bd{animation:breathe 2s ease-in-out infinite}@keyframes breathe{50%{transform:translateY(1px)}}
+.c-m-sleep.run .z1{animation:zz 2s ease-in infinite}.c-m-sleep.run .z2{animation:zz 2s ease-in infinite -1s}
+@keyframes zz{0%{transform:translate(0,3px);opacity:0}30%{opacity:1}100%{transform:translate(2px,-3px);opacity:0}}
+.c-m-think.run .d1{animation:c1 1s steps(1) infinite}.c-m-think.run .d2{animation:c2 1s steps(1) infinite}.c-m-think.run .d3{animation:c3 1s steps(1) infinite}
+.c-m-analyze.run .it{animation:look 1s steps(1) infinite}.c-m-analyze.run .gl{animation:blink .5s steps(1) infinite}
+.c-m-work.run .hm{transform-origin:0 100%;animation:hammer .4s ease-in infinite}@keyframes hammer{50%{transform:rotate(-40deg)}}
+.c-m-work.run .sp{animation:blink .4s steps(1) infinite}
+.c-m-delegate.run .w1{animation:blink .5s steps(1) infinite}.c-m-delegate.run .w2{animation:blink .5s steps(1) infinite -.25s}
 @media (prefers-reduced-motion: reduce){.run,.run g{animation:none!important}}
 </style>`
 
@@ -481,10 +650,137 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
     f(7, 11, 11, 1, INK); f(18, 11, 4, 3, INK)
     f(27, 6, 1, 9, '#C9CCD2', 'it'); f(26, 15, 3, 1, '#7A4A26', 'it')
   },
+  // Apoio's roles act their job out: what they work on stands in front of them
+  // (a class with `fr` draws over the legs), and each wears its trade.
+  // Legendista: headphones and a hoodie; types the captions on the laptop beside him.
+  legendista: (f, t) => {
+    crabTrunk(f)
+    f(7, 16, 16, 6, t); f(12, 16, 1, 3, '#F8F6F1'); f(17, 16, 1, 3, '#F8F6F1')
+    f(8, 7, 14, 1, '#3A3A3C'); f(7, 8, 1, 2, '#3A3A3C'); f(22, 8, 1, 2, '#3A3A3C')
+    f(5, 10, 3, 4, '#3A3A3C'); f(22, 10, 3, 4, '#3A3A3C'); f(6, 11, 1, 2, t); f(23, 11, 1, 2, t)
+    desk(f)
+    f(23, 13, 7, 7, '#3A3A3C', 'fr'); f(24, 14, 5, 5, '#BFE3F5', 'fr')
+    f(24, 15, 4, 1, '#A83E62', 'fr tx1'); f(24, 17, 3, 1, '#A83E62', 'fr tx2')
+    f(11, 20, 19, 2, '#8E929A', 'fr')
+    for (let x = 12; x < 29; x += 2) f(x, 20, 1, 1, '#5A5A5C', 'fr')
+    f(13, 18, 4, 3, CLAY, 'fr kl'); f(18, 18, 4, 3, CLAY, 'fr kr')
+  },
+  // Revisor: shirt and tie at the desk; reads the screen through a magnifier held to his eye.
+  revisor: (f, t) => {
+    crabTrunk(f)
+    f(7, 16, 16, 6, '#F1EFEA'); f(12, 16, 2, 1, '#D2D1C8'); f(16, 16, 2, 1, '#D2D1C8'); f(14, 16, 2, 5, t)
+    desk(f)
+    f(0, 11, 8, 9, '#3A3A3C', 'fr'); f(1, 12, 6, 7, '#F4F3EE', 'fr')
+    f(2, 13, 4, 1, '#9A9A96', 'fr'); f(2, 15, 3, 1, '#9A9A96', 'fr'); f(2, 17, 4, 1, '#9A9A96', 'fr')
+    f(2, 16, 3, 1, t, 'fr mk'); f(3, 20, 2, 2, '#3A3A3C', 'fr')
+    f(8, 19, 4, 3, CLAY, 'fr')
+    stamp(f, 16, 9, ['.kkkk.', 'k....k', 'k....k', 'k....k', 'k....k', '.kkkk.'], { k: '#3A3A3C' }, 'it')
+    f(17, 10, 4, 4, '#F2C2AE', 'it'); f(18, 11, 3, 3, INK, 'it'); f(18, 11, 1, 1, '#fff', 'it gl')
+    f(21, 15, 1, 1, '#7A4A26', 'it'); f(22, 16, 1, 1, '#7A4A26', 'it')
+    f(23, 16, 4, 4, CLAY, 'it')
+  },
+  // Roteirista: beret, scarf and a striped shirt; writes the script on the sheet in front of him.
+  roteirista: (f, t) => {
+    crabTrunk(f)
+    f(7, 16, 16, 6, '#2F3E5C'); for (const y of [16, 18, 20]) f(7, y, 16, 1, '#F8F6F1')
+    f(8, 15, 14, 1, t); f(10, 16, 2, 3, t)
+    stamp(f, 6, 5, ['.........s........', '....bbbbbbbbbb....', '..bbbbbbbbbbbbbb..', '.bbbbbbbbbbbbbbbbb', 'dddddddddddddddd..'], { s: '#466A24', b: t, d: '#466A24' })
+    desk(f)
+    f(6, 16, 15, 6, '#F8F6F1', 'fr')
+    f(8, 17, 10, 1, '#9A9A96', 'fr'); f(8, 19, 11, 1, '#9A9A96', 'fr')
+    f(8, 21, 8, 1, INK, 'fr ln')
+    f(3, 17, 4, 3, CLAY, 'fr')
+    f(18, 18, 3, 3, CLAY, 'fr pn')
+    f(16, 21, 1, 1, INK, 'fr pn'); f(17, 20, 1, 1, '#E8C9A0', 'fr pn')
+    for (let i = 0; i < 4; i++) f(18 + i, 19 - i, 1, 1, '#F5C542', 'fr pn')
+    f(22, 15, 1, 1, '#8E929A', 'fr pn'); f(23, 14, 1, 1, '#E88A9A', 'fr pn')
+  },
+  // Capa: photographer's vest and a cap worn backwards; looks through the camera and fires the flash.
+  capa: (f, t) => {
+    crabTrunk(f)
+    f(7, 16, 4, 6, '#A08A5C'); f(19, 16, 4, 6, '#A08A5C'); f(8, 18, 2, 2, '#8A7449'); f(20, 18, 2, 2, '#8A7449')
+    stamp(f, 7, 8, ['..cccccccccccc..', 'cccccccccccccccc'], { c: t }); f(3, 9, 4, 1, '#1E7887')
+    f(15, 8, 4, 1, '#3A3A3C'); f(13, 9, 12, 7, '#3A3A3C'); f(21, 7, 3, 2, '#E6E8EE')
+    stamp(f, 16, 10, ['.ggg.', 'gkkkg', 'gkkkg', 'gkkkg', '.ggg.'], { g: '#8E929A', k: INK })
+    f(17, 11, 1, 1, '#fff')
+    f(10, 14, 3, 3, CLAY); f(25, 11, 3, 4, CLAY)
+    f(21, 5, 3, 2, '#FFF7D6', 'fl'); f(22, 1, 1, 3, '#F5C542', 'fl')
+    f(17, 5, 3, 1, '#F5C542', 'fl'); f(25, 5, 3, 1, '#F5C542', 'fl')
+    f(19, 2, 1, 1, '#F5C542', 'fl'); f(25, 2, 1, 1, '#F5C542', 'fl')
+  },
+  // Headlines: a painter in beret and smock; holds the palette in front, dips the brush and raises it.
+  headlines: (f, t) => {
+    crabTrunk(f)
+    f(7, 15, 16, 7, '#F1EFEA')
+    f(9, 17, 1, 1, '#D0453F'); f(20, 16, 1, 1, '#378ADD'); f(18, 20, 1, 1, '#F5C542'); f(11, 20, 1, 1, t)
+    stamp(f, 6, 6, ['........s.........', '...bbbbbbbbbbbb...', '.bbbbbbbbbbbbbbbb.', 'bbbbbbbbbbbbbbbbbb', '..dddddddddddddd..'], { s: '#7A4192', b: t, d: '#7A4192' })
+    f(4, 17, 3, 3, CLAY)
+    stamp(f, 3, 15, ['..wwwwwwwww.', '.wwrwwywwwww', 'wwwwwwwwwbww', 'ww..wwwgwwww', 'wwwwwwwwwwww', '.wwwwwwwwww.', '...wwwwww...'],
+      { w: '#D9B382', r: '#D0453F', y: '#F5C542', b: '#378ADD', g: '#3B9C5F' }, 'pal')
+    f(23, 8, 4, 4, CLAY, 'br')
+    for (let i = 0; i < 3; i++) f(22 - i, 12 + i, 1, 1, '#7A4A26', 'br')
+    f(19, 15, 1, 1, '#8E929A', 'br'); f(18, 16, 1, 1, t, 'br'); f(17, 17, 1, 1, t, 'br')
+  },
+  // Conferente: glasses on; checks the table on his clipboard while the tasks above tick green.
+  conferente: (f, t) => {
+    crabTrunk(f)
+    for (const x of [8, 18]) {
+      f(x, 11, 4, 1, '#3A3A3C'); f(x, 14, 4, 1, '#3A3A3C'); f(x, 11, 1, 4, '#3A3A3C'); f(x + 3, 11, 1, 4, '#3A3A3C')
+    }
+    f(12, 12, 6, 1, '#3A3A3C')
+    f(7, 15, 16, 7, t)
+    f(8, 15, 14, 9, '#7A4A26', 'fr'); f(9, 16, 12, 7, '#F8F6F1', 'fr'); f(13, 14, 4, 2, '#8E929A', 'fr')
+    f(9, 18, 12, 1, '#D2D1C8', 'fr'); f(9, 20, 12, 1, '#D2D1C8', 'fr'); f(12, 16, 1, 7, '#D2D1C8', 'fr')
+    for (const [y, k] of [[16, 'k1'], [19, 'k2'], [21, 'k3']] as const) {
+      f(10, y, 1, 1, '#C9CCD2', 'fr'); f(10, y, 1, 1, '#3B9C5F', `fr ${k}`)
+      f(14, y, 5, 1, '#9A9A96', 'fr')
+    }
+    f(5, 17, 3, 3, CLAY, 'fr'); f(22, 17, 3, 3, CLAY, 'fr')
+    for (const [x, y, k] of [[0, 1, 'k1'], [11, 0, 'k2'], [22, 1, 'k3']] as const) {
+      f(x, y, 8, 4, '#F8F6F1'); f(x + 1, y + 1, 2, 2, '#C9CCD2'); f(x + 1, y + 1, 2, 2, '#3B9C5F', k)
+      f(x + 4, y + 1, 3, 1, '#9A9A96'); f(x + 4, y + 2, 2, 1, '#9A9A96')
+    }
+  },
+  // The corner crab's moods. Sleeping: eyes shut, claws down, Zs drifting up.
+  'm-sleep': f => {
+    f(7, 10, 16, 12, CLAY); f(3, 17, 4, 4, CLAY); f(23, 17, 4, 4, CLAY)
+    f(9, 13, 2, 1, INK); f(19, 13, 2, 1, INK)
+    f(7, 22, 2, 4, CLAY, 'la'); f(17, 22, 2, 4, CLAY, 'la'); f(11, 22, 2, 4, CLAY, 'lb'); f(21, 22, 2, 4, CLAY, 'lb')
+    stamp(f, 22, 3, ['zzzz', '..z.', '.z..', 'zzzz'], { z: '#9a9a96' }, 'z1')
+    stamp(f, 26, 0, ['zzz', '.z.', 'zzz'], { z: '#9a9a96' }, 'z2')
+  },
+  // Thinking: eyes up, a claw at the chin, a thought bubble filling dot by dot.
+  'm-think': f => {
+    f(7, 10, 16, 12, CLAY); f(3, 14, 4, 4, CLAY); f(23, 16, 4, 4, CLAY); f(21, 18, 3, 2, CLAY)
+    f(9, 11, 2, 2, INK); f(19, 11, 2, 2, INK)
+    f(7, 22, 2, 4, CLAY, 'la'); f(17, 22, 2, 4, CLAY, 'la'); f(11, 22, 2, 4, CLAY, 'lb'); f(21, 22, 2, 4, CLAY, 'lb')
+    f(22, 6, 1, 1, '#9a9a96', 'd1'); f(24, 3, 2, 2, '#9a9a96', 'd2'); f(26, 0, 3, 3, '#9a9a96', 'd3')
+  },
+  // Analyzing: a magnifier at the eye, sweeping.
+  'm-analyze': f => {
+    crabBody(f, -4, 'it')
+    stamp(f, 16, 9, ['.kkkk.', 'k....k', 'k....k', 'k....k', 'k....k', '.kkkk.'], { k: '#3A3A3C' }, 'it')
+    f(17, 10, 4, 4, '#F2C2AE', 'it'); f(18, 11, 3, 3, INK, 'it'); f(18, 11, 1, 1, '#fff', 'it gl')
+    f(21, 15, 1, 1, '#7A4A26', 'it'); f(22, 16, 1, 1, '#7A4A26', 'it')
+  },
+  // Working: a hard hat; the hammer comes down, sparks fly.
+  'm-work': f => {
+    crabBody(f, -4)
+    stamp(f, 6, 5, ['.....yyyyyyyy.....', '...yyyyyyyyyyyy...', '..yyyyyyyyyyyyyy..', 'dddddddddddddddddd'], { y: '#F5C542', d: '#C99A1E' })
+    f(26, 5, 1, 6, '#7A4A26', 'hm'); f(24, 3, 5, 3, '#8E929A', 'hm')
+    f(28, 12, 1, 1, '#F5C542', 'sp'); f(26, 14, 1, 1, '#F5C542', 'sp'); f(29, 15, 1, 1, '#F5C542', 'sp')
+  },
+  // Coordinating: a megaphone, calling the subagents to work.
+  'm-delegate': f => {
+    crabBody(f, -4)
+    f(23, 8, 3, 3, '#D97757'); f(25, 7, 2, 5, '#E6E8EE'); f(27, 5, 2, 9, '#E6E8EE')
+    f(29, 6, 1, 1, '#8f8cf4', 'w1'); f(29, 9, 1, 1, '#8f8cf4', 'w2'); f(29, 12, 1, 1, '#8f8cf4', 'w1')
+  },
   other: f => crabBody(f),
 }
 
-const costumeOf = (type: string): string => (type === 'Explore' ? 'explore' : tierOf(type))
+const costumeOf = (type: string): string =>
+  type === 'Explore' ? 'explore' : (ROLE_OF[type.replace(/^[^:]*:/, '')] ?? tierOf(type))
 
 const CRAB_SCALE = 1.1
 
@@ -499,9 +795,11 @@ const crab = (x: number, y: number, costume: string, dim = false, isWalking = fa
   const draw = COSTUMES[costume] ?? ((g: Fill) => crabBody(g))
   draw(f, colorOf(costume))
   const group = (cls: string) => `<g class="${cls}">${(groups.get(cls) ?? []).join('')}</g>`
-  const props = [...groups.keys()].filter(k => k !== 'bd' && k !== 'la' && k !== 'lb')
+  const isFront = (k: string) => k.split(' ').includes('fr')
+  const props = [...groups.keys()].filter(k => k !== 'bd' && k !== 'la' && k !== 'lb' && !isFront(k))
+  const front = [...groups.keys()].filter(isFront)
   const body = `<g class="bd">${(groups.get('bd') ?? []).join('')}${props.map(group).join('')}</g>`
-  return `<g transform="translate(${x},${y}) scale(${scale})" opacity="${dim ? 0.45 : 1}" shape-rendering="crispEdges"><g class="c-${costume}${isWalking ? ' run' : ''}">${body}${group('la')}${group('lb')}</g></g>`
+  return `<g transform="translate(${x},${y}) scale(${scale})" opacity="${dim ? 0.45 : 1}" shape-rendering="crispEdges"><g class="c-${costume}${isWalking ? ' run' : ''}">${body}${group('la')}${group('lb')}${front.map(group).join('')}</g></g>`
 }
 
 const statusMark = (x: number, y: number, status: string, color: string): string => {
@@ -546,7 +844,7 @@ const ctxOf = (a: AgentRun): number => (a.contextMax ? Math.min(100, Math.round(
 const agentSvg = (W: number, a: AgentRun, at: number): string => {
   const s = tr()
   const tier = tierOf(a.type)
-  const color = colorOf(tier)
+  const color = colorOf(costumeOf(a.type))
   const ctx = ctxOf(a)
   const textW = W - 42 - 22
   const meta = [a.effort ? `${modelName(a.model)} · ${a.effort}` : modelName(a.model)]
@@ -592,8 +890,8 @@ ${statusMark(W - 8, 16, 'planned', color)}
 
 const compactSvg = (W: number, list: AgentRun[], planned: Planned[], t: ReturnType<typeof totals>): string => {
   const icons = [
-    ...list.filter(a => a.status === 'running').map(a => ({ k: costumeOf(a.type), c: colorOf(tierOf(a.type)), s: 'running', dim: false })),
-    ...list.filter(a => a.status !== 'running').map(a => ({ k: costumeOf(a.type), c: colorOf(tierOf(a.type)), s: a.status, dim: false })),
+    ...list.filter(a => a.status === 'running').map(a => ({ k: costumeOf(a.type), c: colorOf(costumeOf(a.type)), s: 'running', dim: false })),
+    ...list.filter(a => a.status !== 'running').map(a => ({ k: costumeOf(a.type), c: colorOf(costumeOf(a.type)), s: a.status, dim: false })),
     ...planned.map(p => ({ k: p.tier in TIER_COLOR ? p.tier : 'other', c: colorOf(p.tier), s: 'planned', dim: true })),
   ]
   const fit = Math.max(1, Math.floor((W - 150) / 36))
@@ -696,6 +994,9 @@ export const register: Register = (on, options) => {
       description: 'Show or hide the panel of subagents: running, finished and planned, with model, context, cost and time',
     })
 
+    // The agents pane stays open, like the file tree: empty until a subagent runs.
+    if (!(await $.ui.panes()).some(p => p.id === PANE)) void $.ui.open({ id: PANE, title: tr().pane })
+
     // Ticks the running agents' clocks; quiet when nothing runs.
     $.clock.every(1000, () => {
       void (async () => {
@@ -785,6 +1086,8 @@ export const register: Register = (on, options) => {
     if (e.subagentType.startsWith('savvy-')) {
       const f = await read($, flow)
       await autoOpen($, f && !f.isFinished ? f.title : 'savvy-flow')
+    } else if (!(await $.ui.panes()).some(p => p.id === PANE)) {
+      void $.ui.open({ id: PANE, title: tr().pane })
     }
     return started
   })
@@ -938,7 +1241,7 @@ export const register: Register = (on, options) => {
     const barW = Math.max(6, Math.min(20, cols - 34))
     const row = (a: AgentRun) => {
       const tier = tierOf(a.type)
-      const color = colorOf(tier)
+      const color = colorOf(costumeOf(a.type))
       const ctx = ctxOf(a)
       const progress = progressOf(a)
       const model = a.effort ? `${modelName(a.model)} · ${a.effort}` : modelName(a.model)
@@ -983,7 +1286,7 @@ export const register: Register = (on, options) => {
         {p.isCompact ? (
           <Text wrap="truncate-end">
             {[...running, ...finished].map(a => (
-              <Text key={a.id} color={colorOf(tierOf(a.type))}>
+              <Text key={a.id} color={colorOf(costumeOf(a.type))}>
                 {STATUS_GLYPH[a.status]}{' '}
               </Text>
             ))}
@@ -1022,9 +1325,23 @@ export const register: Register = (on, options) => {
     )
   })
 
+  // The main agent's tool in flight: what the crab in the corner acts out.
+  on('tool.call', async ($, e, next) => {
+    if (e.agentId !== undefined || e.tool === 'Agent' || e.tool === TOOL || e.tool === STEP_TOOL) return next(e)
+    const id = e.tool_use_id
+    await update($, activity, () => ({ id, kind: kindOf(e.tool), target: targetOf(e as unknown as Record<string, unknown>) }))
+    try {
+      return await next(e)
+    } finally {
+      await update($, activity, prev => (prev?.id === id ? null : prev))
+    }
+  })
+
+  // Always on, above the other mods in the band: the flow's bar when one runs,
+  // else the crab and what Claude is doing.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
     const f = await read($, flow)
-    if (f === null || e.props.hasSurvey) return next(e)
 
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
@@ -1037,11 +1354,39 @@ export const register: Register = (on, options) => {
       </Box>
     )
     const list = await read($, agents)
+    const running = list.filter(a => a.status === 'running').length
+    const act = await read($, activity)
+    const mood = moodOf(e.props.isWorking, running, act)
+    const status = moodText(mood, running, act)
     const crew = list.length + plannedOf(f, list).length
-    const isWorking = list.some(a => a.status === 'running')
-    const crewButton = (
+    const crewButton = crew ? (
       <Button key="savvy-agents" label={`×${crew}`} plain onPress={() => void togglePane($)} />
-    )
+    ) : null
+    // About 8 CSS px per reported column; the rest is the count, the dismiss
+    // and their gaps. No floor above the slot: a row wider than it would wrap.
+    const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 96))
+
+    if (f === null) {
+      if ('Svg' in ui) {
+        const { Svg } = ui
+        return above(
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            <Svg source={moodSvg(width, mood, status)} alt={status} width={width} height={H} />
+            {crewButton}
+          </Box>,
+        )
+      }
+      return above(
+        <Box flexDirection="row" gap={1}>
+          <Text color={CLAY}>▣</Text>
+          <Text wrap="truncate-end" dimColor={mood === 'sleep'}>
+            {status}
+          </Text>
+          {crewButton}
+        </Box>,
+      )
+    }
+
     const percent = `${Math.round(ratio(f) * 100)}%`
     const dismiss = (
       <Button
@@ -1055,12 +1400,9 @@ export const register: Register = (on, options) => {
 
     if ('Svg' in ui) {
       const { Svg } = ui
-      // About 8 CSS px per reported column; the rest is the count, the dismiss
-      // and their gaps. No floor above the slot: a row wider than it would wrap.
-      const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 96))
       return above(
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(f, width, isWorking)} alt={`${f.title}: ${label(f)}, ${percent}`} width={width} height={H} />
+          <Svg source={rowSvg(f, width, mood)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={H} />
           {crewButton}
           {dismiss}
         </Box>,
@@ -1069,14 +1411,14 @@ export const register: Register = (on, options) => {
 
     const cols = e.props.bodyColumns
     const titleW = Math.max(8, Math.min(30, f.title.length + 2, Math.floor(cols / 3)))
-    const width = Math.max(6, Math.min(40, cols - titleW - 32))
+    const barW = Math.max(6, Math.min(40, cols - titleW - 32))
     return above(
       <Box flexDirection="row" gap={2}>
         <Box width={titleW} flexShrink={0}>
           <Text color={f.isFinished ? DONE : ACCENT}>● </Text>
           <Text wrap="truncate-end">{f.title}</Text>
         </Box>
-        <Text color={f.isFinished ? DONE : ACCENT}>{barText(f, width)}</Text>
+        <Text color={f.isFinished ? DONE : ACCENT}>{barText(f, barW)}</Text>
         <Text bold>{label(f)}</Text>
         <Text dimColor>{percent}</Text>
         <Text color={CLAY}>▣</Text>
