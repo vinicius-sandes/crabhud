@@ -367,6 +367,10 @@ ${CRAB_CSS}${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
 </svg>`
 }
 
+// The line between this bar and the mods drawn below it in the band.
+const hairline = (W: number): string =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="13" viewBox="0 0 ${W} 13"><style>.l{stroke:#bdbbb5}@media (prefers-color-scheme: dark){.l{stroke:#5c5b57}}</style><line class="l" x1="0" y1="6.5" x2="${W}" y2="6.5" stroke-width="1"/></svg>`
+
 // No flow running: the crab and what Claude is doing, in one drawing.
 const moodSvg = (W: number, mood: Mood, text: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <style>.t{fill:#1f1f1f}.m{fill:#8a8a8a}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>
@@ -1345,11 +1349,22 @@ export const register: Register = (on, options) => {
 
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
-    // The band is shared: the bar sits on top and what the other mods draw stays below it.
+    // The band is shared: the bar sits on top, a hairline under it, and what the
+    // other mods draw stays below.
     const theirs = await next(e)
+    // About 8 CSS px per reported column; the rest is the count, the dismiss
+    // and their gaps. No floor above the slot: a row wider than it would wrap.
+    const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 96))
+    const divider =
+      'Svg' in ui ? (
+        <ui.Svg source={hairline(width)} alt="—" width={width} height={13} />
+      ) : (
+        <Text dimColor>{'─'.repeat(Math.max(4, e.props.bodyColumns || 40))}</Text>
+      )
     const above = (bar: RenderElement) => (
       <Box flexDirection="column">
         {bar}
+        {divider}
         {theirs}
       </Box>
     )
@@ -1359,12 +1374,10 @@ export const register: Register = (on, options) => {
     const mood = moodOf(e.props.isWorking, running, act)
     const status = moodText(mood, running, act)
     const crew = list.length + plannedOf(f, list).length
+    // Opens or closes the agents pane; says how many subagents this session ran.
     const crewButton = crew ? (
-      <Button key="savvy-agents" label={`×${crew}`} plain onPress={() => void togglePane($)} />
+      <Button key="savvy-agents" label={tr().agentsN(crew)} plain onPress={() => void togglePane($)} />
     ) : null
-    // About 8 CSS px per reported column; the rest is the count, the dismiss
-    // and their gaps. No floor above the slot: a row wider than it would wrap.
-    const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 96))
 
     if (f === null) {
       if ('Svg' in ui) {
