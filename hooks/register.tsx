@@ -42,11 +42,27 @@ const TEXT = {
   },
 }
 
+// The window autocompaction measures against, as /context shows it: the
+// person's autoCompactWindow (the app's setting, settings.json or the
+// environment) or else the model's own. Null until the engine answers; then
+// the model's window stands in.
+let compactWindow: number | null = null
+
+// Asks the engine again, so a change to the setting shows within seconds. A
+// summary breakdown is counted locally: no request leaves the machine.
+async function pullCompactWindow($: EngineInterface): Promise<void> {
+  const u = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
+  const window = u?.context.breakdown?.rawMaxTokens
+  compactWindow = typeof window === 'number' && window > 0 ? window : null
+}
+
 function toChat(u: Pick<SessionUsage, 'context' | 'cost'>): HudChat {
+  const tokens = u.context.tokens ?? null
+  const window = compactWindow ?? u.context.window
   return {
-    ctxTokens: u.context.tokens ?? null,
-    ctxWindow: u.context.window,
-    ctxPercent: u.context.percent ?? null,
+    ctxTokens: tokens,
+    ctxWindow: window,
+    ctxPercent: tokens === null ? (u.context.percent ?? null) : Math.round((tokens / window) * 100),
     costUsd: u.cost?.usd ?? null,
   }
 }
@@ -456,6 +472,7 @@ export const register: Register = on => {
 
     // What this chat already knows is a baseline, not news: the shared file
     // may hold a fresher reading from another chat.
+    await pullCompactWindow($)
     const u = await $.session.usage()
     await setChat($, toChat(u))
     ownLimits = JSON.stringify(u.rateLimits)
@@ -472,8 +489,8 @@ export const register: Register = on => {
 
     // One quarter-second clock: the chat's record each tick (the settings,
     // under the terminal, each second), the shared limits every half second,
-    // this chat's usage every second. Each is a stat or a local read; nothing
-    // here reaches the model.
+    // this chat's usage every second, the autocompact window every ten. Each
+    // is a stat or a local read; nothing here reaches the model.
     let tick = 0
     let busy = false
     $.clock.every(250, () => {
@@ -485,6 +502,7 @@ export const register: Register = on => {
           if (record !== null) await pullRecord($)
           else if (tick % 4 === 0) await pullTerminal($)
           if (tick % 2 === 0) await pullShared($)
+          if (tick % 40 === 0) await pullCompactWindow($)
           if (tick % 4 === 0) await applyUsage($, await $.session.usage())
           if (record === null && tick % 200 === 0) record = await findRecord($)
         } finally {

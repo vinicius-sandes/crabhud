@@ -86,10 +86,10 @@ async function shown(ui: any): Promise<string> {
 }
 
 // session.start with an engine beneath it: what a chat sees when it opens.
-async function start($: any, on: any) {
+async function start($: any, on: any, usage: (e: any) => unknown = () => ({ startedAt: 0, ...measure })) {
   on('session.start', (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: {} }) as any)
-  on('session.usage', () => ({ value: { startedAt: 0, ...measure } }) as any)
+  on('session.usage', ((_$: unknown, e: any) => ({ value: usage(e) })) as any)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as any)
   on('session.id', () => ({ value: 'sess-1' }) as any)
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -417,5 +417,32 @@ test("another mod's row in the band stays beside the HUD", async ($, on) => {
   await ui.resize({ columns: 120, rows: 1, in: 'hud' })
   expect((await ui.find({ type: 'Text', text: /savvy/ }))?.text).toBe('savvy: 2/5')
   expect(await shown(ui)).toContain('31%')
+  await ui.unmount()
+})
+
+test('the context gauge measures against the autocompact window, and follows it', async ($, on) => {
+  const { clock } = world(on)
+  // The engine's /context figures: autoCompactWindow set to 400k, later 200k.
+  let compact = 400000
+  await start($, on, (e: { breakdown?: string }) => ({
+    startedAt: 0,
+    ...measure,
+    context: { ...measure.context, ...(e.breakdown ? { breakdown: { rawMaxTokens: compact } } : {}) },
+  }))
+  await $.session.measure(measure)
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  await ui.resize({ columns: 100, rows: 4, in: 'hud' })
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+  const at400 = await shown(ui)
+  console.log(`autocompact at 400k: ${at400}`)
+  expect(at400).toContain('312k / 400k')
+  expect(at400).toContain('78%')
+  // The setting changes: within ten seconds the gauge follows.
+  compact = 200000
+  await clock.advance(10_000)
+  const at200 = await shown(ui)
+  console.log(`autocompact at 200k: ${at200}`)
+  expect(at200).toContain('312k / 200k')
+  expect(at200).toContain('156%')
   await ui.unmount()
 })

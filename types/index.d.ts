@@ -9,6 +9,7 @@ export type HudLimit = {
 /** What belongs to this chat alone: its context window and its cost. */
 export type HudChat = {
   ctxTokens: number | null
+  /** The autocompact window when the engine names one, else the model's. */
   ctxWindow: number
   ctxPercent: number | null
   costUsd: number | null

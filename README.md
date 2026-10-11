@@ -2,7 +2,7 @@
 
 A pixel-art status HUD for [Claude Code](https://claude.com/claude-code) that sits right above the prompt and shows, live, without a single click:
 
-- **This chat:** the selected **model** and **effort** (Low, Medium, High, Extra, Ultracode), its **context window** (tokens used / window), and its **cost** in USD
+- **This chat:** the selected **model** and **effort** (Low, Medium, High, Extra, Ultracode), its **context** (tokens used / the autocompact window, or the model's window when none is set; it follows a change to the setting within seconds), and its **cost** in USD
 - **Your account:** the **5-hour** and **7-day usage limits** with their reset times, shared across every chat
 
 ```
