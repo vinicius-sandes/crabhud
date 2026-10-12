@@ -14,7 +14,7 @@ Click anywhere on the HUD to switch between **compact** (one line) and **expande
 The loudest settings get their own look, following each surface's own effort picker:
 
 - **Desktop app:** **Ultracode** switches palettes: the bars flow through a purple-to-pink gradient and a soft pixel wave drifts behind everything.
-- **Terminal:** Low is yellow, Medium green, High purple. **xhigh** turns the HUD purple, with a purple wave behind it; **max** turns it every colour, with a rainbow wave. Ultracode (Tab in `/effort`) shows next to the level, as in `Max · Ultracode`.
+- **Terminal:** Low is yellow, Medium green, High purple. **xhigh** turns the HUD purple, with a purple wave behind it; **max** turns it every colour, with a rainbow wave. Ultracode (Tab in `/effort`, `/effort ultracode on`, or `"ultracode": true` in the settings) shows next to the level, as in `Max · Ultracode`; "Dynamic workflows" in `/config` only allows it, so it does not turn it on.
 
 When the context or a limit crosses 90%, you get a toast.
 

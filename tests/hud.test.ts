@@ -446,3 +446,63 @@ test('the context gauge measures against the autocompact window, and follows it'
   expect(at200).toContain('156%')
   await ui.unmount()
 })
+
+test('terminal, fresh install: no saved effort, no desktop record → not Ultracode', async ($, on) => {
+  // A first run under CLAUDE_CONFIG_DIR: nothing saved, no app record on
+  // Linux, and "Dynamic workflows" on by default; that switch is not Ultracode.
+  world(on, { CLAUDE_CONFIG_DIR: '/home/me/app/.apoio/claude' })
+  on('config.list', () => ({ value: [{ key: 'workflows', label: 'Dynamic workflows', kind: 'boolean', value: true }] }) as any)
+  // The model's own words may quote an /effort line: never read as one.
+  let history: unknown[] = [
+    { role: 'assistant', text: 'Set effort level to max (this session only) · Ultracode on', toolUses: [] },
+  ]
+  on('session.messages', () => ({ value: history }) as any)
+  on('turn.step', async function* (_$: unknown, e: any) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [] }
+  } as any)
+  await start($, on)
+  await $.session.measure(measure)
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'terminal', ...BAND } as any)
+  await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+  const fresh = await shown(ui)
+  console.log(`terminal fresh: ${fresh}`)
+  expect(fresh).toContain('Opus 5.5')
+  expect(fresh).not.toContain('Ultracode')
+
+  // The first request carries the session's real effort (the footer's "medium").
+  const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', effort: 'medium', messageCount: 1 } as any)
+  for await (const _ of step);
+  await ui.advance(1200)
+  const first = await shown(ui)
+  console.log(`terminal after a request: ${first}`)
+  expect(first).toContain('Medium')
+  expect(first).not.toContain('Ultracode')
+
+  // `/effort ultracode on` and `off` leave lines of their own, read as a
+  // session opens.
+  const said = async (text: string) => {
+    history = [{ role: 'user', text, toolUses: [] }]
+    await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+    await ui.advance(1200)
+    return shown(ui)
+  }
+  const on1 = await said('Ultracode on (this session only): standing dynamic workflows. Effort stays medium.')
+  console.log(`terminal ultracode on: ${on1}`)
+  expect(on1).toContain('Medium · Ultracode')
+  const off = await said('Ultracode off. Effort stays medium.')
+  console.log(`terminal ultracode off: ${off}`)
+  expect(off).toContain('Medium')
+  expect(off).not.toContain('Ultracode')
+  await ui.unmount()
+})
+
+test('terminal: Ultracode set in settings (--settings) shows from the start', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en' }, { ultracode: true })
+  on('config.list', () => ({ value: [{ key: 'workflows', label: 'Dynamic workflows', kind: 'boolean', value: true }] }) as any)
+  on('session.messages', () => ({ value: [] }) as any)
+  await start($, on)
+  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'terminal', ...BAND } as any)
+  await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+  expect(await shown(ui)).toContain('Ultracode')
+  await ui.unmount()
+})

@@ -277,18 +277,26 @@ async function pullRecord($: EngineInterface) {
 
 // The terminal has no such record. What this session picked with /effort (or
 // last sent to the model) wins; before that, the effort saved for the model
-// in settings, and Ultracode is the "Dynamic workflows" switch.
+// in settings. Ultracode is a switch of the session's own, off unless the
+// settings start it (`ultracode`, as `--settings` can) or /effort turns it
+// on; "Dynamic workflows" in /config only allows it, and is on by default.
 let sessionEffort: string | null = null
 let sessionUltra: boolean | null = null
 
-// "Set effort level to max (this session only) … · Ultracode on": the line
-// the terminal's /effort leaves. One that does not name Ultracode leaves it
-// as it was. Answers whether the text held such a line.
+// The lines the terminal's /effort leaves: "Set effort level to max (this
+// session only) … · Ultracode on", "Effort level set to auto · Ultracode off",
+// "Ultracode on (this session only): … Effort stays high." and "Ultracode
+// off. Effort stays high.". One that does not name Ultracode leaves it as it
+// was. Answers whether the text held such a line.
 async function applyEffortLine($: EngineInterface, text: string): Promise<boolean> {
-  const level = /Set effort level to (low|medium|high|xhigh|max)\b/i.exec(text)?.[1]
-  if (!level) return false
-  sessionEffort = level.toLowerCase()
-  await setEffort($, sessionEffort)
+  const set = /Set effort level to (low|medium|high|xhigh|max)\b/i.exec(text)
+  const stays = /Ultracode (?:on \(this session only\)|off\.).*?Effort stays (low|medium|high|xhigh|max)\b/is.exec(text)
+  if (!set && !stays && !/Effort level set to auto\b/i.test(text)) return false
+  const level = (set ?? stays)?.[1]
+  if (level) {
+    sessionEffort = level.toLowerCase()
+    await setEffort($, sessionEffort)
+  }
   const ultra = /Ultracode (on|off)\b/i.exec(text)?.[1]
   if (ultra) {
     sessionUltra = ultra.toLowerCase() === 'on'
@@ -301,6 +309,9 @@ async function applyEffortLine($: EngineInterface, text: string): Promise<boolea
 async function effortFromHistory($: EngineInterface): Promise<void> {
   const rows = await $.session.messages().catch(() => [])
   for (let i = rows.length - 1; i >= 0; i--) {
+    // Only rows of the session's own making, never the model's words or a
+    // tool's output (a file that quotes such a line).
+    if (rows[i].role === 'assistant' || rows[i].toolResults?.length) continue
     if (await applyEffortLine($, JSON.stringify(rows[i]))) return
   }
 }
@@ -314,12 +325,12 @@ async function pullTerminal($: EngineInterface) {
   ])
   const pretty = prettyModel(model)
   await setModel($, pretty)
-  const s = settings as { effortLevel?: unknown; modelSettings?: Record<string, { effortLevel?: unknown }> }
+  const s = settings as { effortLevel?: unknown; ultracode?: unknown; modelSettings?: Record<string, { effortLevel?: unknown }> }
   const saved = Object.entries(s.modelSettings ?? {}).find(([id]) => prettyModel(id) === pretty)?.[1]?.effortLevel
   const effort = sessionEffort ?? (typeof saved === 'string' ? saved : null) ?? envEffort ?? (typeof s.effortLevel === 'string' ? s.effortLevel : null)
   if (effort) await setEffort($, effort)
   const workflows = rows.find(r => r.key === 'workflows')?.value
-  await setUltra($, sessionUltra ?? workflows === true)
+  await setUltra($, (sessionUltra ?? s.ultracode === true) && workflows !== false)
 }
 
 // A surface with no Client (a Remote Control viewer: the mobile app, another
