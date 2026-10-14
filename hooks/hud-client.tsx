@@ -1,6 +1,7 @@
 import type { ClientModule, RenderElement } from 'claude-code'
 
 import type { HudLimit, HudProps } from '../types'
+import { barCells, mergeCells } from './hud-bars'
 
 type State = { open: boolean; frame: number; refresh: number }
 type Seg = { t: string; c?: string; dim?: boolean; bold?: boolean }
@@ -10,8 +11,6 @@ type Piece =
   | { seg: Seg }
   | { bar: { p: number | null; n: number; base: string } }
   | { el: RenderElement; w: number }
-// One pixel of a bar: solid, the two dithered steps of its edge, or empty.
-type Px = 'full' | 'dark' | 'mid' | 'empty'
 
 const GREEN = '#3FB68B'
 const PURPLE = '#8B83E6'
@@ -19,7 +18,6 @@ const AMBER = '#E9A23B'
 const RED = '#E5534B'
 const ORANGE = '#D97757'
 const SPIN = ['✻', '✶', '✷', '✸', '✹', '✺']
-const GLYPH: Record<Px, string> = { full: '█', dark: '▓', mid: '▒', empty: '·' }
 // Effort from calm to loud on the desktop: grey, sky, the HUD's purple,
 // magenta, hot pink.
 const EFFORT_COLOR: Record<string, string> = {
@@ -83,8 +81,11 @@ const ULTRA = ['#8B83E6', '#A58BEB', '#C86DD7', '#E46FB0', '#F25F8B', '#E46FB0',
 // there each pixel is a one-cell Box, so the bar's length never depends on
 // the glyphs. Its text runs about 0.8 cell a character.
 
-// The frame clock's callback reads the newest props through this.
+// The frame clock's callback reads the newest props through this (the HUD's;
+// the picker's previews keep their own clock).
 let latest: HudProps | null = null
+// The sample the picker's previews draw, in percent.
+const SAMPLE = 64
 
 const tone = (p: number, base: string) => (p >= 90 ? RED : p >= 70 ? AMBER : base)
 
@@ -112,16 +113,6 @@ function fmtTok(n: number): string {
 
 const pctText = (p: number | null) => (p === null ? '—' : `${Math.round(p)}%`)
 
-// Solid up to the fill, its edge dithered (two steps once the fill is long
-// enough, one on a short one), dots after.
-function pixels(p: number | null, n: number): Px[] {
-  const filled = Math.min(n, Math.round(((p ?? 0) / 100) * n))
-  const fade = filled < n ? (filled >= 4 ? 2 : filled >= 2 ? 1 : 0) : 0
-  return Array.from({ length: n }, (_, i): Px =>
-    i >= filled ? 'empty' : fade >= 1 && i === filled - 1 ? 'mid' : fade === 2 && i === filled - 2 ? 'dark' : 'full',
-  )
-}
-
 // Ultracode's backdrop: a soft dither wave drifting across the band. 0 is
 // blank, 1-3 the ·, ░ and ▒ steps.
 function shimmer(row: number, cols: number, t: number): number[] {
@@ -131,11 +122,6 @@ function shimmer(row: number, cols: number, t: number): number[] {
     const v = wave * sweep
     return v > 0.7 ? 3 : v > 0.45 ? 2 : v > 0.28 ? 1 : 0
   })
-}
-
-// The terminal is monospace: block glyphs line up there.
-function glyphBar(p: number | null, n: number, colorAt: (i: number) => string): Seg[] {
-  return pixels(p, n).map((px, i) => (px === 'empty' ? { t: GLYPH.empty, dim: true } : { t: GLYPH[px], c: colorAt(i) }))
 }
 
 // A loud look: a palette that flows along the bars and the labels, and the
@@ -173,25 +159,22 @@ function flowAt(theme: Theme, p: number, i: number, frame: number): string {
   return p >= 90 ? (k % 2 === 0 ? '#F25F8B' : RED) : theme.flow[k % theme.flow.length]
 }
 
-function merge(segs: Seg[]): Seg[] {
-  const out: Seg[] = []
-  for (const s of segs) {
-    const last = out[out.length - 1]
-    if (last && last.c === s.c && last.dim === s.dim && last.bold === s.bold) last.t += s.t
-    else out.push({ ...s })
-  }
-  return out
-}
-
 const Hud: ClientModule<HudProps, State> = (props, surface) => {
-  latest = props
+  const preview = props.preview
+  if (preview === undefined) latest = props
   const { Box, Text } = surface.elements
   const desktop = props.surface === 'desktop'
   const init: State = { open: props.expanded, frame: 0, refresh: 0 }
   const st = surface.state ?? init
-  const theme = themeOf(props)
+  const theme = preview === undefined ? themeOf(props) : null
 
-  if (surface.state === undefined) {
+  if (surface.state === undefined && preview !== undefined) {
+    // A preview is always alive, so the picker shows each style moving.
+    surface.every(200, () => {
+      const cur = surface.state ?? init
+      surface.setState({ ...cur, frame: cur.frame + 1 })
+    })
+  } else if (surface.state === undefined) {
     let ticks = 0
     surface.every(200, () => {
       ticks++
@@ -220,20 +203,42 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       {s.t}
     </Text>
   )
-  const line = (segs: Seg[]) => merge(segs).map(text)
   const bar = (p: number | null, n: number, base: string): RenderElement => {
     const col = tone(p ?? 0, base)
     const colorAt = (i: number) => (theme ? flowAt(theme, p ?? 0, i, st.frame) : col)
-    if (!desktop) return <Box flexDirection="row" flexShrink={0}>{line(glyphBar(p, n, colorAt))}</Box>
-    // Each pixel is its own glyph clipped to one cell: the █ ▓ ▒ texture
-    // stays, and the bar's length is the cells', not the font's.
+    const cells = barCells(props.style, p, n, colorAt, st.frame, preview !== undefined || props.working)
+    if (!desktop) {
+      return (
+        <Box flexDirection="row" flexShrink={0}>
+          {mergeCells(cells).map(c => (
+            <Text color={c.c} dimColor={c.dim} backgroundColor={c.bg}>
+              {c.t}
+            </Text>
+          ))}
+        </Box>
+      )
+    }
+    // Each cell is its own glyph clipped to one cell: the texture stays, and
+    // the bar's length is the cells', not the font's.
     return (
       <Box flexDirection="row" flexShrink={0}>
-        {pixels(p, n).map((px, i) => (
-          <Box width={1} height={1} flexShrink={0} overflow="hidden" justifyContent="center">
-            {px === 'empty' ? <Text dimColor>{GLYPH.empty}</Text> : <Text color={colorAt(i)}>{GLYPH[px]}</Text>}
+        {cells.map(c => (
+          <Box width={1} height={1} flexShrink={0} overflow="hidden" justifyContent="center" backgroundColor={c.bg}>
+            <Text color={c.c} dimColor={c.dim}>
+              {c.t}
+            </Text>
           </Box>
         ))}
+      </Box>
+    )
+  }
+
+  if (preview !== undefined) {
+    return (
+      <Box flexDirection="row" columnGap={1} alignItems="center">
+        {text({ t: 'ctx', dim: true })}
+        {bar(SAMPLE, preview, PURPLE)}
+        {text({ t: `${SAMPLE}%`, bold: true })}
       </Box>
     )
   }

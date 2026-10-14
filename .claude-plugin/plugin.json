@@ -1,7 +1,7 @@
 {
   "name": "crabhud",
-  "version": "2.1.0",
-  "description": "Above the prompt: a crab that shows what Claude is doing, a progress bar for long jobs, and a HUD with model, effort, context, 5-hour and 7-day limits and cost. Beside it: a live panel of subagents. Ships the /savvy-flow skill and its five worker agents.",
+  "version": "2.2.0",
+  "description": "Above the prompt: a crab that shows what Claude is doing, a progress bar for long jobs, and a HUD with model, effort, context, 5-hour and 7-day limits and cost, in six bar styles (/hud style). Beside it: a live panel of subagents. Ships the /savvy-flow skill and its five worker agents.",
   "author": {
     "name": "Vinicius Sandes"
   },

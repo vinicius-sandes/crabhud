@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderElement, SessionRateLimit, SessionUsage, ToolCallInput, TurnStepResult } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderInput, SessionRateLimit, SessionUsage, ToolCallInput, TurnStepResult } from 'claude-code'
 
-import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, Panel, Phase, PlannedTask, StepGroup } from '../types'
+import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup } from '../types'
+import { STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, mergeCells } from './hud-bars'
 
 // crabhud: the crab and the progress bar on top of the band above the prompt, the HUD
 // under them, and the agents panel beside the chat. The engine follows $ only into
@@ -1660,15 +1661,24 @@ const hiddenA = atom({ plugin: 'crabhud', key: 'hidden' } as const, false)
 const alertedA = atom({ plugin: 'crabhud', key: 'alerted' } as const, [])
 // The HUD's language; null until the person picks one on the first run.
 const langA = atom({ plugin: 'crabhud', key: 'language' } as const, null)
+// The bars' look, per surface (/hud style).
+const DEFAULT_STYLES: HudStyles = { terminal: 'pixel', desktop: 'pixel' }
+const styleA = atom({ plugin: 'crabhud', key: 'style' } as const, DEFAULT_STYLES)
+const STYLE_PANE = 'crabhud-style'
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
-const COMMAND = 'Show or hide the HUD (on / off), or pick its language (language)'
+const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style) or its language (language)'
 
 const TEXT = {
   en: {
     hidden: 'HUD hidden. Use /hud on to show it again.',
     shown: 'HUD shown.',
     language: (name: string) => `HUD language: ${name}.`,
+    style: (name: string) => `HUD style: ${name}.`,
+    noStyle: (name: string, all: string) => `No style "${name}". Pick one of: ${all}.`,
+    pickTitle: 'HUD style',
+    pickHelp: (keys: string) => `Press ${keys} to choose · Esc to close`,
+    pickNow: '← now',
     context: 'Context',
     limit: { five_hour: '5-hour limit', seven_day: '7-day limit', spend_limit: 'Spend limit' } as Record<string, string>,
     resets: (t: string) => ` (resets in ${t})`,
@@ -1679,6 +1689,11 @@ const TEXT = {
     hidden: 'HUD escondido. Use /hud on para mostrar.',
     shown: 'HUD visível.',
     language: (name: string) => `Idioma do HUD: ${name}.`,
+    style: (name: string) => `Estilo do HUD: ${name}.`,
+    noStyle: (name: string, all: string) => `Não há o estilo "${name}". Escolha um destes: ${all}.`,
+    pickTitle: 'Estilo do HUD',
+    pickHelp: (keys: string) => `Tecle ${keys} para escolher · Esc para fechar`,
+    pickNow: '← atual',
     context: 'Contexto',
     limit: { five_hour: 'Limite de 5h', seven_day: 'Limite de 7 dias', spend_limit: 'Limite de gasto' } as Record<string, string>,
     resets: (t: string) => ` (reseta em ${t})`,
@@ -2019,18 +2034,16 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
   const T = TEXT[p.lang] ?? TEXT.en
   const tone = (v: number, base: string) => (v >= 90 ? RC.red : v >= 70 ? RC.amber : base)
   const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v)}%`)
-  // The same pixels as the HUD: solid, a dithered edge, dots after.
-  const bar = (v: number | null, n: number, base: string) => {
-    const filled = Math.min(n, Math.round(((v ?? 0) / 100) * n))
-    const edge = filled < n && filled >= 2 ? '▒' : ''
-    const solid = '█'.repeat(filled - edge.length)
-    return (
-      <Box flexDirection="row" flexShrink={0}>
-        <Text color={tone(v ?? 0, base)}>{solid + edge}</Text>
-        <Text dimColor>{'·'.repeat(n - filled)}</Text>
-      </Box>
-    )
-  }
+  // The HUD's bars in the style picked, still.
+  const bar = (v: number | null, n: number, base: string) => (
+    <Box flexDirection="row" flexShrink={0}>
+      {mergeCells(barCells(p.style, v, n, () => tone(v ?? 0, base), 0, false)).map(c => (
+        <Text color={c.c} dimColor={c.dim} backgroundColor={c.bg}>
+          {c.t}
+        </Text>
+      ))}
+    </Box>
+  )
   const limits = p.limits.map(l => (l.resetsAt !== null && l.resetsAt <= p.now ? { ...l, percent: 0, resetsAt: null } : l))
   const ctxP = p.chat?.ctxPercent ?? null
   const alert = [ctxP ?? 0, ...limits.map(l => l.percent)].some(v => v >= 90)
@@ -2118,12 +2131,18 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
 async function hudStart($: EngineInterface): Promise<void> {
   await $.command.register({ name: 'hud', description: COMMAND })
 
-  const [savedExpanded, savedHidden, lang] = await Promise.all([
+  const [savedExpanded, savedHidden, lang, savedStyle] = await Promise.all([
     $.store.get('expanded'),
     $.store.get('hidden'),
     loadLanguage($),
+    $.store.get('style'),
   ])
   if (typeof savedExpanded === 'boolean') await update($, expandedA, () => savedExpanded)
+  const saved = (savedStyle ?? {}) as Partial<Record<keyof HudStyles, unknown>>
+  await update($, styleA, () => ({
+    terminal: asStyle(saved.terminal) ?? DEFAULT_STYLES.terminal,
+    desktop: asStyle(saved.desktop) ?? DEFAULT_STYLES.desktop,
+  }))
   if (typeof savedHidden === 'boolean') await update($, hiddenA, () => savedHidden)
   await update($, langA, () => lang)
 
@@ -2188,7 +2207,91 @@ async function hudAfterStep($: EngineInterface, e: Step): Promise<void> {
   if (e.agentId === undefined) await applyUsage($, await $.session.usage())
 }
 
+// Keeps the pick for the session's drawings and for the next sessions.
+async function setStyle($: EngineInterface, value: HudStyles): Promise<void> {
+  await update($, styleA, () => value)
+  await $.store.set('style', value)
+}
+
+// The style picker: each style drawn with a live sample bar, one key each.
+// The pick is for the surface the key was pressed on.
+async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
+  const els = $.ui.resolve(e)
+  const { Box, Button, Text } = els
+  const lang: HudLang = (await read($, langA)) ?? 'en'
+  const T = TEXT[lang]
+  const styles = await read($, styleA)
+  const surface = e.surface === 'desktop' ? 'desktop' : 'terminal'
+  const current = styles[surface]
+  const cols = Math.max(40, e.props?.bodyColumns ?? 80)
+  const n = Math.max(8, Math.min(16, cols - 50))
+  const live = (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in els
+  const base: HudProps = {
+    surface,
+    lang,
+    style: current,
+    chat: null,
+    limits: [],
+    model: '',
+    effort: null,
+    ultracode: false,
+    working: true,
+    expanded: false,
+    now: await $.clock.now(),
+  }
+  const sample = (style: HudStyle) => {
+    if (live) {
+      const { Client } = els as any
+      return <Client key={`style-preview-${style}`} module="./hud-client.tsx" props={{ ...base, style, preview: n }} />
+    }
+    // Elsewhere, a still bar drawn here.
+    return (
+      <Box flexDirection="row" flexShrink={0}>
+        {mergeCells(barCells(style, 64, n, () => RC.purple, 0, false)).map(c => (
+          <Text color={c.c} dimColor={c.dim} backgroundColor={c.bg}>
+            {c.t}
+          </Text>
+        ))}
+      </Box>
+    )
+  }
+  const rows = STYLES.map((style, i) => (
+    <Box key={`style-row-${style}`} flexDirection="row" columnGap={2} alignItems="center">
+      <Box width={12} flexShrink={0}>
+        <Button
+          key={`style-${style}`}
+          label={STYLE_NAMES[style]}
+          plain
+          hotkey={String(i + 1)}
+          onPress={async press => {
+            const cur = await read($, styleA)
+            const where = press.surface === 'desktop' ? 'desktop' : 'terminal'
+            await setStyle($, { ...cur, [where]: style })
+          }}
+        />
+      </Box>
+      {sample(style)}
+      <Box flexShrink={1} overflow="hidden">
+        <Text dimColor wrap="truncate">
+          {STYLE_HINTS[lang][style]}
+        </Text>
+      </Box>
+      <Box width={8} flexShrink={0}>
+        <Text color={RC.green}>{style === current ? T.pickNow : ' '}</Text>
+      </Box>
+    </Box>
+  ))
+  return (
+    <Box flexDirection="column" rowGap={e.surface === 'desktop' ? 1 : 0}>
+      {rows}
+      <Text dimColor>{T.pickHelp(STYLES.map((_, i) => i + 1).join('/'))}</Text>
+    </Box>
+  )
+}
+
 const registerHud: Register = on => {
+  on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => stylePicker($, e))
+
   on('session.measure', async ($, e, next) => {
     await applyUsage($, e)
 
@@ -2210,6 +2313,19 @@ const registerHud: Register = on => {
 
   on('command.run', { command: 'hud' }, async ($, e) => {
     const [arg = '', value = ''] = e.args.trim().split(/\s+/)
+    if (/^style$/i.test(arg)) {
+      const T = TEXT[(await read($, langA)) ?? 'en']
+      // A bare `/hud style` opens the picker; `/hud style dots` sets it on
+      // every surface at once.
+      if (!value) {
+        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        return {}
+      }
+      const style = asStyle(value)
+      if (style === null) return { text: T.noStyle(value, STYLES.join(', ')) }
+      await setStyle($, { terminal: style, desktop: style })
+      return { text: T.style(STYLE_NAMES[style]) }
+    }
     if (/^lang(uage)?$/i.test(arg)) {
       // `/hud language pt-BR` sets it; a bare `/hud language` asks again.
       const lang = asLang(value)
@@ -2271,9 +2387,11 @@ const registerHud: Register = on => {
       )
     }
 
+    const surface = e.surface === 'desktop' ? 'desktop' : 'terminal'
     const props: HudProps = {
-      surface: e.surface === 'desktop' ? 'desktop' : 'terminal',
+      surface,
       lang,
+      style: (await read($, styleA))[surface],
       chat: await read($, chatA),
       limits: (await read($, limitsA))?.limits ?? [],
       model: (await read($, modelA)) || '…',

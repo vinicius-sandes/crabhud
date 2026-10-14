@@ -504,3 +504,133 @@ test('terminal: Ultracode set in settings (--settings) shows from the start', as
   expect(await shown(ui)).toContain('Ultracode')
   await ui.unmount()
 })
+
+// ---- Bar styles (/hud style) ----
+
+const PICKER = {
+  component: 'Pane',
+  requestId: 'crabhud-style',
+  props: { title: 'HUD style', isFocused: true, bodyColumns: 90, placement: 'inline' },
+} as const
+
+// The bar cells the HUD draws, in its compact row.
+// The engine's answers the style tests need beyond the world: the open
+// panes (none) and opening one.
+function panes(on: any, opened: any[] = []) {
+  on('ui.panes', () => ({ value: [] }) as any)
+  on('ui.open', ((_$: unknown, e: any) => {
+    opened.push(e)
+    return { value: { isPlaced: true } }
+  }) as any)
+  return opened
+}
+
+async function barGlyphs(ui: any): Promise<string> {
+  return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇ ]/g, '')
+}
+
+test('/hud style <name> sets the bars on every surface and keeps the pick', async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  await $.session.measure(measure)
+  const said = await $.command.run({ command: 'hud', args: 'style segments' })
+  expect(said.text).toBe('HUD style: Segments.')
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
+    await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+    const g = await barGlyphs(ui)
+    console.log(`${surface} segments: ${g}`)
+    expect(g).toContain('▰')
+    expect(g).toContain('▱')
+    expect(g).not.toContain('█')
+    await ui.unmount()
+  }
+  const bad = await $.command.run({ command: 'hud', args: 'style plaid' } as any)
+  expect(bad.text).toContain('No style "plaid"')
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+  expect(await barGlyphs(ui)).toContain('▰')
+  await ui.unmount()
+})
+
+test('a saved style comes back with the next session', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en', style: { terminal: 'line', desktop: 'dots' } })
+  panes(on)
+  await start($, on)
+  await $.session.measure(measure)
+  const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  await term.resize({ columns: 120, rows: 1, in: 'hud' })
+  expect(await barGlyphs(term)).toContain('━')
+  await term.unmount()
+  const desk = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  await desk.resize({ columns: 120, rows: 1, in: 'hud' })
+  expect(await barGlyphs(desk)).toContain('●')
+  await desk.unmount()
+})
+
+test('/hud style opens the picker: six live previews, a key each, the pick per surface', async ($, on) => {
+  world(on)
+  const opened = panes(on)
+  await start($, on)
+  await $.session.measure(measure)
+  await $.command.run({ command: 'hud', args: 'style' } as any)
+  expect(opened.at(-1)).toMatchObject({ id: 'crabhud-style', focus: true, closeOnEscape: true })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...PICKER } as any)
+    const previews = await ui.findAll({ type: 'Client' })
+    expect(previews).toHaveLength(6)
+    expect(previews.map((c: any) => c.props.props.style)).toEqual(['pixel', 'segments', 'line', 'solid', 'dots', 'spark'])
+    const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
+    expect(words).toContain('← now')
+    expect(words).toContain('Press 1/2/3/4/5/6')
+    // Key 5, Dots: for this surface only.
+    await ui.press({ key: 'style-dots' })
+    await ui.unmount()
+    // Dots now on the surface the key was pressed on; the desktop keeps
+    // pixel until its own pick.
+    for (const where of ['terminal', 'desktop'] as const) {
+      const band = await $.ui.mount({ plugin: 'crabhud', surface: where, ...BAND } as any)
+      await band.resize({ columns: 120, rows: 1, in: 'hud' })
+      const g = await barGlyphs(band)
+      const picked = where === 'terminal' || surface === 'desktop'
+      expect(g.includes('●')).toBe(picked)
+      expect(g.includes('█')).toBe(!picked)
+      await band.unmount()
+    }
+  }
+})
+
+test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark']) {
+    await $.command.run({ command: 'hud', args: `style ${style}` } as any)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      for (const pct of [0, 64, 100]) {
+        await $.session.measure(reading(pct, pct))
+        const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
+        await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+        const line = await shown(ui)
+        expect(line).toContain('$4.32')
+        expect(line).toContain(`${pct}%`)
+        await ui.unmount()
+      }
+    }
+  }
+})
+
+test('the Remote Control row draws the picked style too', async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  await $.session.measure(measure)
+  await $.command.run({ command: 'hud', args: 'style segments' } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'mobile', ...BAND } as any)
+  const line = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join('')
+  console.log(`remote segments: ${line}`)
+  expect(line).toContain('▰')
+  expect(line).not.toContain('█')
+  await ui.unmount()
+})
