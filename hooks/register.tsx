@@ -396,7 +396,7 @@ const TIER_COLOR: Record<string, string> = {
 }
 
 // What each savvy tier runs on, for planned tasks that have no run yet.
-// Apoio's own agents (the apoio-edicao-base and apoio-edicao-intermediaria skills):
+// Apoio's own agents (the apoio-edicao-base, apoio-edicao-intermediaria and apoio-edicao-final skills):
 // a costume and a color per role, matched by agent type.
 const ROLE_OF: Record<string, string> = {
   'legendista-apoio': 'legendista',
@@ -405,6 +405,7 @@ const ROLE_OF: Record<string, string> = {
   'capa-apoio': 'capa',
   'headlines-figma': 'headlines',
   'conferente-apoio': 'conferente',
+  'curador-broll-apoio': 'curador',
 }
 
 const ROLE_COLOR: Record<string, string> = {
@@ -414,6 +415,7 @@ const ROLE_COLOR: Record<string, string> = {
   capa: '#2B9FB3',
   headlines: '#9B59B6',
   conferente: '#3F7CAC',
+  curador: '#A0522D',
 }
 
 const colorOf = (tier: string): string => TIER_COLOR[tier] ?? ROLE_COLOR[tier] ?? '#888780'
@@ -583,7 +585,8 @@ const CRAB_CSS = `<style>
 .c-explore.run .it{transform-origin:50% 100%;animation:fence .5s ease-in-out infinite}
 @keyframes fence{50%{transform:rotate(25deg)}}
 .c-legendista.run .la,.c-legendista.run .lb,.c-revisor.run .la,.c-revisor.run .lb,.c-roteirista.run .la,.c-roteirista.run .lb,
-.c-capa.run .la,.c-capa.run .lb,.c-headlines.run .la,.c-headlines.run .lb,.c-conferente.run .la,.c-conferente.run .lb{animation:none}
+.c-capa.run .la,.c-capa.run .lb,.c-headlines.run .la,.c-headlines.run .lb,.c-conferente.run .la,.c-conferente.run .lb,
+.c-curador.run .la,.c-curador.run .lb{animation:none}
 .c-legendista.run .kl{animation:tap .25s steps(1) infinite}.c-legendista.run .kr{animation:tap .25s steps(1) infinite -.125s}
 @keyframes tap{50%{transform:translateY(-1px)}}
 .c-legendista.run .tx1{animation:blink 1s steps(1) infinite}.c-legendista.run .tx2{animation:blink 1s steps(1) infinite -.5s}
@@ -598,6 +601,9 @@ const CRAB_CSS = `<style>
 @keyframes dip{0%,100%{transform:translate(1px,-3px)}45%,60%{transform:translate(-5px,3px)}}
 .c-conferente.run .k1{animation:c1 1s steps(1) infinite}.c-conferente.run .k2{animation:c2 1s steps(1) infinite}.c-conferente.run .k3{animation:c3 1s steps(1) infinite}
 @keyframes c1{0%,24%{opacity:0}25%,100%{opacity:1}}@keyframes c2{0%,49%{opacity:0}50%,100%{opacity:1}}@keyframes c3{0%,74%{opacity:0}75%,100%{opacity:1}}
+.c-curador.run .sp{animation:roll .5s steps(1) infinite}@keyframes roll{50%{transform:translateX(-1px)}}
+.c-curador.run .st{animation:press 1s ease-in-out infinite}@keyframes press{0%,30%,100%{transform:translateY(-1px)}45%,60%{transform:translateY(3px)}}
+.c-curador.run .ok,.c-curador.run .no{animation:c2 1s steps(1) infinite}
 .c-m-sleep.run .la,.c-m-sleep.run .lb,.c-m-sleep.run .bd,.c-m-think.run .la,.c-m-think.run .lb,.c-m-analyze.run .la,.c-m-analyze.run .lb,.c-m-delegate.run .la,.c-m-delegate.run .lb{animation:none}
 .c-m-sleep.run .bd{animation:breathe 2s ease-in-out infinite}@keyframes breathe{50%{transform:translateY(1px)}}
 .c-m-sleep.run .z1{animation:zz 2s ease-in infinite}.c-m-sleep.run .z2{animation:zz 2s ease-in infinite -1s}
@@ -744,6 +750,25 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
       f(x, y, 8, 4, '#F8F6F1'); f(x + 1, y + 1, 2, 2, '#C9CCD2'); f(x + 1, y + 1, 2, 2, '#3B9C5F', k)
       f(x + 4, y + 1, 3, 1, '#9A9A96'); f(x + 4, y + 2, 2, 1, '#9A9A96')
     }
+  },
+  // Curador: suit, bow tie and monocle; stamps the approved b-roll on the filmstrip while the rest go dark.
+  curador: (f, t) => {
+    crabTrunk(f)
+    f(7, 15, 16, 7, '#3A3A3C'); f(13, 15, 4, 7, '#F1EFEA')
+    stamp(f, 12, 14, ['bb..bb', 'bbbbbb', 'bb..bb'], { b: t }); f(14, 15, 2, 1, '#6B3419')
+    stamp(f, 18, 11, ['.gg.', 'g..g', 'g..g', '.gg.'], { g: '#D4AF37' }); f(19, 12, 1, 1, '#fff')
+    f(22, 14, 1, 1, '#D4AF37'); f(21, 15, 1, 1, '#D4AF37')
+    desk(f)
+    f(0, 18, 30, 5, '#2A2A2C', 'fr')
+    for (let x = 1; x < 30; x += 3) { f(x, 18, 1, 1, '#8E929A', 'fr sp'); f(x, 22, 1, 1, '#8E929A', 'fr sp') }
+    for (const [x, sky] of [[2, '#C9CCD2'], [11, '#E8A87C'], [20, '#8FC9E8']] as const) {
+      f(x, 19, 7, 2, sky, 'fr'); f(x, 21, 7, 1, '#5E9E4A', 'fr'); f(x + 5, 19, 1, 1, '#F5C542', 'fr')
+    }
+    f(2, 19, 7, 3, 'rgba(31,30,29,.65)', 'fr no'); f(11, 19, 7, 3, 'rgba(31,30,29,.65)', 'fr no')
+    f(19, 18, 9, 1, '#3B9C5F', 'fr ok'); f(19, 22, 9, 1, '#3B9C5F', 'fr ok'); f(19, 18, 1, 5, '#3B9C5F', 'fr ok'); f(27, 18, 1, 5, '#3B9C5F', 'fr ok')
+    f(4, 15, 3, 3, CLAY, 'fr')
+    f(23, 6, 4, 2, '#7A4A26', 'fr st'); f(24, 8, 2, 4, '#7A4A26', 'fr st'); f(22, 12, 6, 2, t, 'fr st'); f(22, 14, 6, 1, '#6B3419', 'fr st')
+    f(25, 9, 3, 3, CLAY, 'fr st')
   },
   // The corner crab's moods. Sleeping: eyes shut, claws down, Zs drifting up.
   'm-sleep': f => {
