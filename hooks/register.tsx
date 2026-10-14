@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import type { Activity, AgentRun, Flow, Panel, Phase, PlannedTask } from '../types'
+import type { Activity, AgentRun, Flow, Panel, Phase, PlannedTask, StepGroup } from '../types'
 
 const flow = atom({ plugin: 'savvy-progress', key: 'flow' } as const, null)
 const agents = atom({ plugin: 'savvy-progress', key: 'agents' } as const, [])
@@ -28,6 +28,8 @@ type ProgressInput = {
   phase?: Phase
   finished?: boolean
   tasks?: { title?: string; tier?: string; after?: number[] }[]
+  step?: string
+  groups?: { name?: string; steps?: string[] }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +188,8 @@ const blank = (): Flow => ({
   phase: 'plan',
   isFinished: false,
   tasks: [],
+  step: '',
+  groups: [],
 })
 
 const isNewFlow = (prev: Flow | null, input: ProgressInput): boolean =>
@@ -200,13 +204,24 @@ const cleanTasks = (tasks: ProgressInput['tasks']): PlannedTask[] | undefined =>
       after: (t.after ?? []).filter(n => Number.isInteger(n) && n > 0),
     }))
 
+const cleanGroups = (groups: ProgressInput['groups']): StepGroup[] | undefined =>
+  groups
+    ?.map(g => ({ name: (g.name ?? '').trim(), steps: (g.steps ?? []).map(t => t.trim()).filter(Boolean) }))
+    .filter(g => g.steps.length)
+
+const stepsOf = (f: Flow): string[] => f.groups.flatMap(g => g.steps)
+
 const merge = (prev: Flow | null, input: ProgressInput): Flow => {
   // A new title means a new flow: never carry counters over from an earlier one.
   const base = isNewFlow(prev, input) || !prev ? blank() : { ...blank(), ...prev }
   const tasks = cleanTasks(input.tasks) ?? base.tasks
-  const total = Math.max(0, Math.round(input.total ?? (input.tasks ? tasks.length : base.total)))
+  const groups = cleanGroups(input.groups) ?? base.groups
+  const counted = input.groups ? groups.reduce((n, g) => n + g.steps.length, 0) : input.tasks ? tasks.length : base.total
+  const total = Math.max(0, Math.round(input.total ?? counted))
   const done = Math.min(total || Infinity, Math.max(0, Math.round(input.done ?? base.done)))
   const phase = input.phase && PHASES.includes(input.phase) ? input.phase : base.phase
+  // A named step lasts until it is renamed or the count moves on.
+  const step = input.step !== undefined ? input.step.trim() : done !== base.done ? '' : base.step
   return {
     ...base,
     title: input.title?.trim() || base.title,
@@ -215,15 +230,26 @@ const merge = (prev: Flow | null, input: ProgressInput): Flow => {
     phase: input.finished ? 'close' : phase,
     isFinished: input.finished === true,
     tasks,
+    step,
+    groups,
   }
+}
+
+// The step in progress: the one the caller named, else the next one in `groups`.
+const currentStep = (f: Flow): string => {
+  if (f.isFinished) return ''
+  const steps = stepsOf(f)
+  return f.step || steps[Math.min(f.done, steps.length - 1)] || ''
 }
 
 const label = (f: Flow): string => {
   const s = tr()
   if (f.isFinished) return s.done
+  const step = currentStep(f)
+  const count = f.total ? `${f.done}/${f.total}` : `${f.running} ${s.busy}`
+  if (step) return `${clip(step, 30)} · ${count}`
   if (f.phase === 'plan') return s.plan
   if (f.phase === 'design') return s.design
-  const count = f.total ? `${f.done}/${f.total}` : `${f.running} ${s.busy}`
   return `${f.phase === 'review' ? s.review : s.tasks} ${count}`
 }
 
@@ -300,24 +326,55 @@ const fitText = (s: string, size: number, maxW: number): string => {
   return out + '…'
 }
 
+// A stretch of the bar per group (one per skill): base, intermediária, final keep their
+// colors whichever of them are called; anything else takes the next free color.
+const GROUP_COLOR: Record<string, string> = { base: '#5B8DEF', 'intermediária': ACCENT, intermediaria: ACCENT, final: '#E39B3A' }
+const GROUP_PALETTE = ['#5B8DEF', ACCENT, '#E39B3A', '#D9649B', '#3FA7B5']
+const groupColor = (name: string, i: number): string => GROUP_COLOR[name.toLowerCase()] ?? GROUP_PALETTE[i % GROUP_PALETTE.length] ?? ACCENT
+
+// The row is taller when the bar carries the groups' names under it.
+const rowHeight = (f: Flow): number => (f.groups.length ? 40 : H)
+
 const rowSvg = (f: Flow, W: number, mood: Mood): string => {
+  const RH = rowHeight(f)
   // The title takes what it needs, up to 40% of the row; the bar takes the rest.
   const title = fitText(f.title, 13, Math.max(60, W * 0.4))
   const BAR_X = Math.round(16 + textWidth(title, 13) + 12)
   const BAR_W = Math.max(60, W - BAR_X - 46 - CRAB_W)
-  const color = f.isFinished ? DONE : ACCENT
-  const y0 = (H - BAR_H) / 2
+  const y0 = f.groups.length ? 3 : (H - BAR_H) / 2
+  const mid = y0 + BAR_H / 2
   const fillW = Math.round(BAR_W * ratio(f))
   const runW = f.total ? Math.round((BAR_W * Math.min(f.total, f.done + f.running)) / f.total) : 0
-  const dots: string[] = []
 
-  // Dithered fill: sparse at the start, dense toward the head.
+  // Where each group starts and ends on the bar, and which one is in progress.
+  const spans: { name: string; color: string; x0: number; x1: number; done: number; size: number }[] = []
+  let before = 0
+  f.groups.forEach((g, i) => {
+    const size = g.steps.length
+    spans.push({
+      name: g.name,
+      color: f.isFinished ? DONE : groupColor(g.name, i),
+      x0: f.total ? Math.round((BAR_W * before) / f.total) : 0,
+      x1: f.total ? Math.round((BAR_W * (before + size)) / f.total) : BAR_W,
+      done: Math.max(0, Math.min(size, f.done - before)),
+      size,
+    })
+    before += size
+  })
+  const live = spans.find(sp => sp.done < sp.size) ?? spans[spans.length - 1]
+  const color = f.isFinished ? DONE : (live?.color ?? ACCENT)
+  const spanAt = (x: number): number => Math.max(0, spans.findIndex(sp => x < sp.x1))
+  const colorAt = (x: number): string => (spans.length ? (spans[spanAt(x)]?.color ?? color) : color)
+
+  // Dithered fill: sparse at the start, dense toward the head; each pixel takes its group's color.
+  const dots = new Map<string, string[]>()
+  const put = (c: string, r: string) => dots.set(c, [...(dots.get(c) ?? []), r])
   const cols = Math.floor(fillW / CELL)
   const rows = Math.floor(BAR_H / CELL)
   for (let c = 0; c < cols; c++) {
     const density = 0.35 + 0.6 * Math.pow(c / Math.max(1, cols), 1.2)
     for (let r = 0; r < rows; r++) {
-      if (noise(c, r) < density) dots.push(`<rect class="t${Math.floor(noise(r, c) * 4)}" x="${c * CELL + 1}" y="${r * CELL + 1}" width="2" height="2"/>`)
+      if (noise(c, r) < density) put(colorAt(c * CELL + 1), `<rect class="t${Math.floor(noise(r, c) * 4)}" x="${c * CELL + 1}" y="${r * CELL + 1}" width="2" height="2"/>`)
     }
   }
   // Handed to workers, not yet accepted: a faint second layer.
@@ -333,13 +390,21 @@ const rowSvg = (f: Flow, W: number, mood: Mood): string => {
     const x = Math.round((BAR_W * i) / f.total)
     if (x > fillW + 4) ticks.push(`<rect x="${x}" y="${BAR_H / 2 - 4}" width="1.5" height="8" rx="0.75"/>`)
   }
+  // A gap where one group ends and the next begins, and each group's name and count under it.
+  const gaps = spans.slice(1).map(sp => `<rect class="k" x="${sp.x0 - 1}" width="2.5" height="${BAR_H}"/>`)
+  const names = spans.map(sp => {
+    const isLive = sp === live && !f.isFinished
+    const text = fitText(`${sp.name} ${sp.done}/${sp.size}`, 10.5, Math.max(10, sp.x1 - sp.x0 - 6))
+    return `<rect x="${sp.x0 + 1}" y="${BAR_H + 4}" width="${Math.max(2, sp.x1 - sp.x0 - 3)}" height="2" rx="1" fill="${sp.color}" opacity="${isLive ? 0.9 : 0.4}"/>
+<text x="${sp.x0 + 2}" y="${BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${isLive ? 600 : 400}" fill="${sp.color}" opacity="${isLive || f.isFinished ? 1 : 0.75}">${xml(text)}</text>`
+  })
 
   const text = label(f)
-  const pillW = Math.round(18 + text.length * 6.6)
+  const pillW = Math.min(BAR_W, Math.round(18 + textWidth(text, 11) * 1.08))
   const pillX = Math.max(0, Math.min(BAR_W - pillW, fillW - pillW))
   const percent = `${Math.round(ratio(f) * 100)}%`
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${RH}" viewBox="0 0 ${W} ${RH}">
 <style>
 .t{fill:#1f1f1f}.m{fill:#8a8a8a}.k{fill:#e4e4e2}.tk{fill:#b4b4b0}
 @media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.k{fill:#2c2c2c}.tk{fill:#5a5a5a}}
@@ -350,19 +415,21 @@ const rowSvg = (f: Flow, W: number, mood: Mood): string => {
 @media (prefers-reduced-motion: reduce){.t0,.t1,.t2,.t3{animation:none}}
 </style>
 <defs><clipPath id="c"><rect x="0" y="0" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/></clipPath></defs>
-<circle cx="5" cy="${H / 2}" r="4" fill="${color}"/>
-<text class="t" x="16" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13" font-weight="500">${xml(title)}</text>
+<circle cx="5" cy="${mid}" r="4" fill="${color}"/>
+<text class="t" x="16" y="${mid + 4.5}" font-family="${FONT}" font-size="13" font-weight="500">${xml(title)}</text>
 <g transform="translate(${BAR_X},${y0})">
 <rect class="k" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/>
 <g clip-path="url(#c)">
-<g fill="${color}">${dots.join('')}</g>
+${[...dots].map(([c, rs]) => `<g fill="${c}">${rs.join('')}</g>`).join('')}
 <g fill="${color}" opacity="0.45">${faint.join('')}</g>
 <g class="tk">${ticks.join('')}</g>
+${gaps.join('')}
 </g>
 <rect x="${pillX}" width="${pillW}" height="${BAR_H}" rx="${BAR_H / 2}" fill="${color}"/>
 <text x="${pillX + pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-family="${FONT}" font-size="11" font-weight="600" fill="#ffffff">${xml(text)}</text>
+${names.join('')}
 </g>
-<text class="m" x="${W - CRAB_W - 6}" y="${H / 2 + 4.5}" text-anchor="end" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums">${percent}</text>
+<text class="m" x="${W - CRAB_W - 6}" y="${mid + 4.5}" text-anchor="end" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums">${percent}</text>
 ${CRAB_CSS}${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
 </svg>`
 }
@@ -875,6 +942,43 @@ ${tile(0, s.cost, '≈' + fmtCost(t.cost))}${tile(1, s.tokens, fmtTokens(t.token
 
 const headerHeight = (title: string): number => (title ? 72 : 44)
 
+// The flow's steps, group by group: done, in progress, still to come. Two columns when wide.
+const STEP_ROW = 18
+const stepColumns = (W: number): number => (W >= 380 ? 2 : 1)
+const stepsHeight = (f: Flow, W: number): number =>
+  f.groups.reduce((h, g) => h + 22 + Math.ceil(g.steps.length / stepColumns(W)) * STEP_ROW, 4)
+
+const stepsSvg = (W: number, f: Flow): string => {
+  const n = stepColumns(W)
+  const colW = W / n
+  const out: string[] = []
+  let y = 0
+  let index = 0
+  f.groups.forEach((g, gi) => {
+    const color = groupColor(g.name, gi)
+    const gDone = Math.max(0, Math.min(g.steps.length, f.done - index))
+    out.push(`<text x="0" y="${y + 15}" font-family="${FONT}" font-size="12" font-weight="600" fill="${color}">${xml(fitText(g.name, 12, W - 60))}</text>
+<text class="m" x="${W}" y="${y + 15}" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${f.isFinished ? g.steps.length : gDone}/${g.steps.length}</text>`)
+    y += 22
+    g.steps.forEach((name, i) => {
+      const at = index + i
+      const state = f.isFinished || at < f.done ? 'done' : at === f.done ? 'now' : 'next'
+      const x = (i % n) * colW
+      const ry = y + Math.floor(i / n) * STEP_ROW
+      const mark =
+        state === 'done'
+          ? `<path d="M${x + 1} ${ry + 9}l3 3 6-6.5" fill="none" stroke="#3B9C5F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`
+          : state === 'now'
+            ? `<circle class="live" cx="${x + 5}" cy="${ry + 9}" r="3.5" fill="${color}"/>`
+            : `<circle cx="${x + 5}" cy="${ry + 9}" r="3.5" fill="none" stroke="#9a9a96" stroke-width="1.2"/>`
+      out.push(`${mark}<text class="${state === 'next' ? 'm' : 't'}" x="${x + 16}" y="${ry + 13}" font-family="${FONT}" font-size="12" font-weight="${state === 'now' ? 600 : 400}">${xml(fitText(name, 12, colW - 22))}</text>`)
+    })
+    y += Math.ceil(g.steps.length / n) * STEP_ROW
+    index += g.steps.length
+  })
+  return svg(W, stepsHeight(f, W), out.join('\n'))
+}
+
 // The task's own progress when the worker reports steps; a finished run is full.
 const progressOf = (a: AgentRun): number | null => {
   if (a.status === 'done') return 1
@@ -990,7 +1094,8 @@ export const register: Register = (on, options) => {
       description:
         'Report /savvy-flow progress to the progress bar above the prompt and the agents panel. ' +
         'Call it after presenting the plan (title, total, tasks, phase "delegate"), each time a task is accepted (done), ' +
-        'when switching phase or re-planning (tasks), and once at the end with finished: true. Fields left out keep their previous value.',
+        'when switching phase or re-planning (tasks), and once at the end with finished: true. Fields left out keep their previous value. ' +
+        'Optional for any long job: `groups` splits the bar into named stretches (one per stage) with their steps, and the bar and the agents panel then show the step in progress.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -999,6 +1104,20 @@ export const register: Register = (on, options) => {
           done: { type: 'integer', minimum: 0, description: 'Number of tasks accepted after review.' },
           phase: { type: 'string', enum: [...PHASES] },
           finished: { type: 'boolean', description: 'True once the flow is closed.' },
+          step: { type: 'string', description: 'The step in progress, a few words; shown on the bar. Not needed with `groups`, which name it from `done`.' },
+          groups: {
+            type: 'array',
+            description:
+              'Named stretches of the bar, in order, each with its steps in order. The total is the number of steps unless `total` is given; `done` counts steps across all groups.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'A word or two, shown under its stretch of the bar.' },
+                steps: { type: 'array', items: { type: 'string' }, description: 'The steps of this stretch, a few words each.' },
+              },
+              required: ['name', 'steps'],
+            },
+          },
           tasks: {
             type: 'array',
             description:
@@ -1260,6 +1379,9 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column">
           <Svg source={headerSvg(W, title, t)} alt={title ? `${title}: ${summary}` : summary} width={W} height={headerHeight(title)} />
+          {f && f.groups.length > 0 && (
+            <Svg source={stepsSvg(W, f)} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
+          )}
           {toggleCompact}
           {isEmpty && <Text dimColor>{s.empty}</Text>}
           {running.length > 0 && section('h-run', `${s.running} · ${running.length}`)}
@@ -1391,9 +1513,21 @@ export const register: Register = (on, options) => {
     // The band is shared: the bar sits on top, a hairline under it, and what the
     // other mods draw stays below.
     const theirs = await next(e)
-    // About 8 CSS px per reported column; the rest is the count, the dismiss
-    // and their gaps. No floor above the slot: a row wider than it would wrap.
-    const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 96))
+    // About 8 CSS px per reported column. No floor above the slot: a row wider than it would wrap.
+    const slot = (e.props.bodyColumns || 100) * 8
+    const list = await read($, agents)
+    const running = list.filter(a => a.status === 'running').length
+    const act = await read($, activity)
+    const mood = moodOf(e.props.isWorking, running, act)
+    const status = moodText(mood, running, act)
+    const crew = list.length + plannedOf(f, list).length
+    // Opens or closes the agents pane; says how many subagents this session ran.
+    const crewButton = crew ? (
+      <Button key="savvy-agents" label={tr().agentsN(crew)} plain onPress={() => void togglePane($)} />
+    ) : null
+    // The drawing gets the slot minus the buttons beside it (the count, the dismiss) and their gaps.
+    const buttons = (crew ? Math.round(textWidth(tr().agentsN(crew), 13)) + 36 : 0) + (f ? 40 : 0)
+    const width = Math.max(180, Math.min(1600, slot - Math.max(24, buttons) - 16))
     const divider =
       'Svg' in ui ? (
         <ui.Svg source={hairline(width)} alt="—" width={width} height={13} />
@@ -1407,16 +1541,6 @@ export const register: Register = (on, options) => {
         {theirs}
       </Box>
     )
-    const list = await read($, agents)
-    const running = list.filter(a => a.status === 'running').length
-    const act = await read($, activity)
-    const mood = moodOf(e.props.isWorking, running, act)
-    const status = moodText(mood, running, act)
-    const crew = list.length + plannedOf(f, list).length
-    // Opens or closes the agents pane; says how many subagents this session ran.
-    const crewButton = crew ? (
-      <Button key="savvy-agents" label={tr().agentsN(crew)} plain onPress={() => void togglePane($)} />
-    ) : null
 
     if (f === null) {
       if ('Svg' in ui) {
@@ -1454,7 +1578,7 @@ export const register: Register = (on, options) => {
       const { Svg } = ui
       return above(
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(f, width, mood)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={H} />
+          <Svg source={rowSvg(f, width, mood)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
           {crewButton}
           {dismiss}
         </Box>,

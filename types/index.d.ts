@@ -6,6 +6,12 @@ export type PlannedTask = {
   after: number[]
 }
 
+/** A named stretch of the bar (one skill, say) and the steps it holds, in order. */
+export type StepGroup = {
+  name: string
+  steps: string[]
+}
+
 export type Flow = {
   title: string
   total: number
@@ -14,6 +20,9 @@ export type Flow = {
   phase: Phase
   isFinished: boolean
   tasks: PlannedTask[]
+  /** The step in progress, when the caller names it; else read from `groups`. */
+  step: string
+  groups: StepGroup[]
 }
 
 export type AgentStatus = 'running' | 'done' | 'failed'
