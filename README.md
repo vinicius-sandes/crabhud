@@ -1,9 +1,11 @@
-# pixel-hud
+# crabhud
 
-A pixel-art status HUD for [Claude Code](https://claude.com/claude-code) that sits right above the prompt and shows, live, without a single click:
+A Claude Code mod that sits right above the prompt and beside the chat:
 
-- **This chat:** the selected **model** and **effort** (Low, Medium, High, Extra, Ultracode), its **context** (tokens used / the autocompact window, or the model's window when none is set; it follows a change to the setting within seconds), and its **cost** in USD
-- **Your account:** the **5-hour** and **7-day usage limits** with their reset times, shared across every chat
+- **The crab** shows what Claude is doing right now (sleeping, thinking, analyzing, working, coordinating).
+- **A progress bar** for long jobs: a title, the step in progress, stretches with their own colors, and a checklist in the panel. Skills and workflows feed it through the `mcp__crabhud__progress` tool; subagents report their own steps through `mcp__crabhud__step`.
+- **The HUD** under them: the selected **model** and **effort**, the chat's **context** and **cost**, and the account's **5-hour** and **7-day limits** with their reset times, shared across every chat.
+- **The agents panel** (`/agents-info`): running, finished and planned subagents with model, effort, progress, context, cost and time, each with its own crab.
 
 ```
 ✓ Opus 5.5  High   │   ctx ███▒····· 31%   │   5h ██▒······ 20%  ↻ 2h39m   │   7d █████▓▒·· 58%  ↻ 1d6h   │   $4.32   ▾
@@ -18,6 +20,8 @@ The loudest settings get their own look, following each surface's own effort pic
 
 When the context or a limit crosses 90%, you get a toast.
 
+crabhud brings together what used to be two mods, pixel-hud and a copy of savvy-progress. Don't load either of them alongside it.
+
 ## Remote Control
 
 Following a chat through Remote Control (from the phone or another computer), the HUD shows a still version of the compact row, marked **⇄ Remote Control: ON**: the same model, effort, context, limits and cost, in the same colours, refreshed with every new reading, without the animations (each frame would have to cross the connection). The computer running the chat keeps the full HUD. The mod only needs to be installed on that computer.
@@ -26,7 +30,7 @@ Following a chat through Remote Control (from the phone or another computer), th
 
 - **Context and cost** refresh after every model response, not only when a turn ends.
 - **Model and effort** follow the picker under the chat the moment you change it (desktop app). In the terminal they follow `/effort` the moment it closes, and start from the effort saved for your model.
-- **Limits** are the account's, not the chat's: every chat running the HUD shares its latest reading through a small file (`~/.claude/pixel-hud-limits.json`), and every HUD shows the freshest one. Use one chat to 97% and the others show 97% within half a second.
+- **Limits** are the account's, not the chat's: every chat running the HUD shares its latest reading through a small file (`~/.claude/crabhud-limits.json`), and every HUD shows the freshest one. Use one chat to 97% and the others show 97% within half a second.
 - A window whose reset time has passed drops back to 0% until the next reading.
 
 ## Install
@@ -36,20 +40,20 @@ Works in the Claude desktop app (Code tab) and in the Claude Code terminal, on W
 1. Clone the repository into your mods folder:
 
    ```bash
-   git clone https://github.com/Apoio-Midias/pixel-hud ~/.claude/mods/pixel-hud
+   git clone https://github.com/<user>/crabhud ~/.claude/mods/crabhud
    ```
 
 2. Add this to `~/.claude/settings.json` (inside the existing top-level object):
 
    ```json
-   "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/pixel-hud" }
+   "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/crabhud" }
    ```
 
    If your `settings.json` already has an `"env"` block, add just the `CLAUDE_CODE_PLUGIN_DIRS` key to it.
 
 3. Open a new chat. The HUD appears above the prompt, in every chat from now on, and asks which language you want.
 
-To update: `git -C ~/.claude/mods/pixel-hud pull`, then open a new chat.
+To update: `git -C ~/.claude/mods/crabhud pull`, then open a new chat.
 
 ## Language
 
@@ -58,13 +62,14 @@ The HUD speaks English by default and also Brazilian Portuguese. The first time 
 To skip the question (for example, when setting up a machine from a script), set it in `~/.claude/settings.json`:
 
 ```json
-"pluginConfigs": { "pixel-hud": { "options": { "language": "pt-BR" } } }
+"pluginConfigs": { "crabhud": { "options": { "language": "pt-BR" } } }
 ```
 
 ## Commands
 
 - `/hud off` hides the HUD, `/hud on` shows it again, `/hud` toggles it.
 - `/hud language` asks for the language again; `/hud language en` or `/hud language pt-BR` sets it directly.
+- `/agents-info` opens or closes the agents panel.
 
 ## Cost
 
@@ -82,10 +87,10 @@ Everything stays on your machine. The HUD reads the desktop app's local record o
 ## Tests
 
 ```bash
-claude plugin validate ~/.claude/mods/pixel-hud
-claude plugin test ~/.claude/mods/pixel-hud
+claude plugin validate ~/.claude/mods/crabhud
+claude plugin test ~/.claude/mods/crabhud
 ```
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The progress bar, the crab and the agents panel start from JohnnyVizz's savvy-progress (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

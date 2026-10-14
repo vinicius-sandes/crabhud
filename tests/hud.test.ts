@@ -11,7 +11,7 @@ const reading = (fivePct: number, weekPct: number) => ({
   changed: ['context', 'rateLimits', 'cost'] as ('context' | 'rateLimits' | 'cost')[],
 })
 const measure = reading(20, 58)
-const SHARED = '/home/me/.claude/pixel-hud-limits.json'
+const SHARED = '/home/me/.claude/crabhud-limits.json'
 
 // What the mods beneath draw in the band; nothing unless a test says so.
 let beneath: ((ui: any) => unknown) | null = null
@@ -89,6 +89,7 @@ async function shown(ui: any): Promise<string> {
 async function start($: any, on: any, usage: (e: any) => unknown = () => ({ startedAt: 0, ...measure })) {
   on('session.start', (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: {} }) as any)
+  on('tool.register', ((_$: unknown, e: any) => ({ value: { tool: `mcp__crabhud__${e.name}` } })) as any)
   on('session.usage', ((_$: unknown, e: any) => ({ value: usage(e) })) as any)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as any)
   on('session.id', () => ({ value: 'sess-1' }) as any)
@@ -99,7 +100,7 @@ test('desktop bars fill in proportion to the percentage', async ($, on) => {
   world(on)
   await start($, on)
   await $.session.measure(measure)
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 100, rows: 4, in: 'hud' })
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
   const texts = await ui.findAll({ type: 'Text', in: 'hud' })
@@ -119,7 +120,7 @@ test("another chat's newer limits reading wins; this chat's context stays its ow
   await start($, on)
   // A response in this chat: its reading goes out to the other chats.
   await $.session.measure(reading(92, 58))
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 120, rows: 1, in: 'hud' })
   expect(await shown(ui)).toContain('92%')
   // Then another chat, later, sees the 5-hour window at 97%.
@@ -143,7 +144,7 @@ test('the first run asks for the language, once, in English', async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
     const ask = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
     console.log(`${surface} first run: ${ask}`)
     expect(ask).toContain('Choose the HUD language')
@@ -162,7 +163,7 @@ test('the first run asks for the language, once, in English', async ($, on) => {
     await ui.unmount()
   }
   // Once picked, a new drawing does not ask again.
-  const again = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const again = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(await again.find({ key: 'lang-en' })).toBeUndefined()
   await again.unmount()
 })
@@ -171,7 +172,7 @@ test('labels follow the picked language', async ($, on) => {
   world(on, {}, new Map(), { language: 'pt-BR' })
   await start($, on)
   await $.session.measure(measure)
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 100, rows: 4, in: 'hud' })
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
   const open = await shown(ui)
@@ -194,7 +195,7 @@ test('ultracode shimmers behind the band and stays readable', async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
     await ui.resize({ columns: 100, rows: 1, in: 'hud' })
     const a = await shown(ui)
     await ui.advance(1000)
@@ -222,7 +223,7 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
     for (const columns of [140, 100, 80, 60, 45]) {
       await ui.resize({ columns, rows: 1, in: 'hud' })
       const line = await shown(ui)
@@ -244,13 +245,13 @@ test('compact: the spinner turns in a box of fixed width, so the row never moves
       return { width: box?.props.width, glyph: box?.text }
     }
     // Idle: the ✓, in the same box the spinner will turn in.
-    const idle = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    const idle = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
     await idle.resize({ columns: 100, rows: 1, in: 'hud' })
     const ready = await status(idle)
     await idle.unmount()
     expect(ready.glyph).toBe('✓')
 
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND, props: { ...BAND.props, isWorking: true } } as any)
     await ui.resize({ columns: 100, rows: 1, in: 'hud' })
     const frames = []
     for (let i = 0; i < 6; i++) {
@@ -269,7 +270,7 @@ test('a click anywhere expands, another collapses', async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface, ...BAND } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
     await ui.resize({ columns: 100, rows: 4, in: 'hud' })
     await ui.pointer({ type: 'down', x: 40, y: 0, button: 'left', in: 'hud' })
     const open = await shown(ui)
@@ -292,7 +293,7 @@ test('terminal: effort from settings and /effort; xhigh purple, max every colour
   const effortRow = () => $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await start($, on)
   await $.session.measure(measure)
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'terminal', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   await ui.resize({ columns: 140, rows: 1, in: 'hud' })
   const barColors = async () =>
     (await ui.findAll({ type: 'Text', in: 'hud' }))
@@ -342,7 +343,7 @@ test('linux: the record under XDG_CONFIG_HOME, the shared limits under ~/.claude
   world(on, { XDG_CONFIG_HOME: '/home/me/.cfg' }, files)
   await start($, on)
   await $.session.measure(reading(25, 58))
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 120, rows: 1, in: 'hud' })
   const line = await shown(ui)
   console.log(`linux: ${line}`)
@@ -358,27 +359,24 @@ for (const lang of ['en', 'pt-BR'] as const) {
     world(on, {}, new Map(), { language: lang })
     await start($, on)
     await $.session.measure(measure)
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'mobile', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'mobile', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
     expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
-    // First line: the mark alone, small, its last word green.
-    const mark = await ui.find({ type: 'Svg' })
+    // Under the crab's row: the mark alone, small, its last word green.
+    const mark = (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Remote Control'))
     const word = lang === 'en' ? 'ON' : 'ATIVO'
     expect(mark?.props.alt).toBe(`Remote Control: ${word}`)
     expect(String(mark?.props.source)).toContain(`fill="#3FB68B">${word}</text>`)
     expect(String(mark?.props.source)).toContain('font-size="11"')
-    // Second line: the row, on one line, never wrapping.
-    const drawn: any = await ui.drawn()
-    expect(drawn.props.flexDirection).toBe('column')
-    expect(drawn.children).toHaveLength(2)
+    // Then the row, on one line, never wrapping.
     const line = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join(' ')
     console.log(`mobile ${lang}: ${line}`)
     expect(line).not.toContain('Remote Control')
     for (const s of ['Opus 5.5', 'ctx', '31%', '5h', '20%', '↻', '7d', '58%', '$4.32', '✻']) expect(line).toContain(s)
     await ui.unmount()
     // The computer running the chat keeps its own HUD, with no remote mark.
-    const home = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+    const home = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
     expect(await home.findAll({ type: 'Client' })).toHaveLength(1)
-    expect(await home.findAll({ type: 'Svg' })).toHaveLength(0)
+    expect((await home.findAll({ type: 'Svg' })).filter((s: any) => String(s.props.alt).startsWith('Remote Control'))).toHaveLength(0)
     await home.unmount()
   })
 }
@@ -388,7 +386,7 @@ test('the remote row shrinks to a narrow width and keeps the cost', async ($, on
   await start($, on)
   await $.session.measure(measure)
   for (const bodyColumns of [100, 70, 50]) {
-    const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'mobile', ...BAND, props: { ...BAND.props, bodyColumns } } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'mobile', ...BAND, props: { ...BAND.props, bodyColumns } } as any)
     const texts = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
     console.log(`mobile ${bodyColumns}: ${texts.join(' ')}`)
     // Laid out: one cell between a group's pieces, three around each │.
@@ -413,7 +411,7 @@ test("another mod's row in the band stays beside the HUD", async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   beneath = ui => ui.Text({ key: 'other-mod', children: ['savvy: 2/5'] })
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 120, rows: 1, in: 'hud' })
   expect((await ui.find({ type: 'Text', text: /savvy/ }))?.text).toBe('savvy: 2/5')
   expect(await shown(ui)).toContain('31%')
@@ -430,7 +428,7 @@ test('the context gauge measures against the autocompact window, and follows it'
     context: { ...measure.context, ...(e.breakdown ? { breakdown: { rawMaxTokens: compact } } : {}) },
   }))
   await $.session.measure(measure)
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'desktop', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 100, rows: 4, in: 'hud' })
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
   const at400 = await shown(ui)
@@ -462,7 +460,7 @@ test('terminal, fresh install: no saved effort, no desktop record → not Ultrac
   } as any)
   await start($, on)
   await $.session.measure(measure)
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'terminal', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   await ui.resize({ columns: 140, rows: 1, in: 'hud' })
   const fresh = await shown(ui)
   console.log(`terminal fresh: ${fresh}`)
@@ -501,7 +499,7 @@ test('terminal: Ultracode set in settings (--settings) shows from the start', as
   on('config.list', () => ({ value: [{ key: 'workflows', label: 'Dynamic workflows', kind: 'boolean', value: true }] }) as any)
   on('session.messages', () => ({ value: [] }) as any)
   await start($, on)
-  const ui = await $.ui.mount({ plugin: 'pixel-hud', surface: 'terminal', ...BAND } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   await ui.resize({ columns: 140, rows: 1, in: 'hud' })
   expect(await shown(ui)).toContain('Ultracode')
   await ui.unmount()

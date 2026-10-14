@@ -1,3 +1,14 @@
+# Third-party notices
+
+crabhud includes code adapted from these projects, under the MIT License.
+
+## savvy-progress (JohnnyVizz)
+
+The progress bar, the crab and the agents panel (`hooks/progress.tsx`) start from savvy-progress, part of
+[claude-kit](https://github.com/JohnnyVizz/claude-kit). Its pixel bar and gliding pill adapt
+[plan-progress](https://github.com/zycck/claude-mods) by Kirill Serditov (MIT).
+
+```
 MIT License
 
 Copyright (c) 2026 johnnyvizz
@@ -19,3 +30,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```

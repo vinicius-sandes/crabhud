@@ -1,0 +1,9 @@
+{
+  "name": "savvy-progress",
+  "version": "2.0.0",
+  "description": "Bridge for savvy-flow: keeps the mcp__savvy-progress__progress and step tools, answered by crabhud. Load it with crabhud, never with the original savvy-progress.",
+  "author": {
+    "name": "Vinicius Sandes"
+  },
+  "license": "MIT"
+}
