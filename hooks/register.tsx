@@ -558,6 +558,19 @@ const desk = (f: Fill): void => {
   f(0, 23, 30, 2, '#7A5A3C', 'fr')
 }
 
+// A big magnifier held in front of the right eye, which shows through it zoomed in (a 4×4 eye
+// on paler, magnified skin); `ey`/`el` let both eyes glance and blink. Draw it over a trunk.
+const magnifier = (f: Fill): void => {
+  f(9, 12, 2, 2, CLAY); f(19, 12, 2, 2, CLAY)
+  f(9, 12, 2, 2, INK, 'el')
+  stamp(f, 14, 7, ['..kkkkkk..', '.k......k.', 'k........k', 'k........k', 'k........k', 'k........k', 'k........k', 'k........k', '.k......k.', '..kkkkkk..'], { k: '#3A3A3C' })
+  stamp(f, 15, 8, ['.pppppp.', 'pppppppp', 'pppppppp', 'pppppppp', 'pppppppp', 'pppppppp', 'pppppppp', '.pppppp.'], { p: '#F2C2AE' })
+  f(16, 9, 2, 1, '#fff'); f(16, 10, 1, 1, '#fff')
+  f(17, 10, 4, 4, INK, 'ey'); f(19, 11, 1, 1, '#fff', 'ey')
+  f(23, 15, 1, 1, '#7A4A26'); f(23, 16, 2, 1, '#7A4A26')
+  f(23, 17, 4, 4, CLAY)
+}
+
 // Pure CSS, run by the compositor: no redraws. Periods divide one second, so the
 // once-a-second redraw of a running row restarts them in phase. Every crab walks;
 // each costume adds its prop's own motion on top.
@@ -590,8 +603,7 @@ const CRAB_CSS = `<style>
 .c-legendista.run .kl{animation:tap .25s steps(1) infinite}.c-legendista.run .kr{animation:tap .25s steps(1) infinite -.125s}
 @keyframes tap{50%{transform:translateY(-1px)}}
 .c-legendista.run .tx1{animation:blink 1s steps(1) infinite}.c-legendista.run .tx2{animation:blink 1s steps(1) infinite -.5s}
-.c-revisor.run .it{animation:look 1s steps(1) infinite}.c-revisor.run .gl,.c-revisor.run .mk{animation:blink .5s steps(1) infinite}
-@keyframes look{50%{transform:translate(-1px,1px)}}
+.c-revisor.run .mk{animation:blink .5s steps(1) infinite}
 .c-roteirista.run .pn{animation:write 1s steps(1) infinite}
 .c-roteirista.run .ln{transform-origin:0 50%;animation:grow 1s steps(1) infinite}
 @keyframes write{0%{transform:translate(-8px,0)}12%{transform:translate(-7px,-1px)}25%{transform:translate(-6px,0)}37%{transform:translate(-5px,-1px)}50%{transform:translate(-4px,0)}62%{transform:translate(-3px,-1px)}75%{transform:translate(-2px,0)}87%{transform:translate(-1px,-1px)}100%{transform:translate(0,0)}}
@@ -609,7 +621,8 @@ const CRAB_CSS = `<style>
 .c-m-sleep.run .z1{animation:zz 2s ease-in infinite}.c-m-sleep.run .z2{animation:zz 2s ease-in infinite -1s}
 @keyframes zz{0%{transform:translate(0,3px);opacity:0}30%{opacity:1}100%{transform:translate(2px,-3px);opacity:0}}
 .c-m-think.run .d1{animation:c1 1s steps(1) infinite}.c-m-think.run .d2{animation:c2 1s steps(1) infinite}.c-m-think.run .d3{animation:c3 1s steps(1) infinite}
-.c-m-analyze.run .it{animation:look 1s steps(1) infinite}.c-m-analyze.run .gl{animation:blink .5s steps(1) infinite}
+.c-m-analyze.run .ey,.c-m-analyze.run .el,.c-revisor.run .ey,.c-revisor.run .el{transform-origin:center;animation:peek 2s steps(1) infinite}
+@keyframes peek{0%{transform:none}25%{transform:translateX(-1px)}50%{transform:translateX(1px)}75%{transform:none}85%{transform:scaleY(.25)}90%{transform:none}}
 .c-m-work.run .hm{transform-origin:0 100%;animation:hammer .4s ease-in infinite}@keyframes hammer{50%{transform:rotate(-40deg)}}
 .c-m-work.run .sp{animation:blink .4s steps(1) infinite}
 .c-m-delegate.run .w1{animation:blink .5s steps(1) infinite}.c-m-delegate.run .w2{animation:blink .5s steps(1) infinite -.25s}
@@ -675,7 +688,7 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
     for (let x = 12; x < 29; x += 2) f(x, 20, 1, 1, '#5A5A5C', 'fr')
     f(13, 18, 4, 3, CLAY, 'fr kl'); f(18, 18, 4, 3, CLAY, 'fr kr')
   },
-  // Revisor: shirt and tie at the desk; reads the screen through a magnifier held to his eye.
+  // Revisor: shirt and tie at the desk; reads the screen through a big magnifier at his eye.
   revisor: (f, t) => {
     crabTrunk(f)
     f(7, 16, 16, 6, '#F1EFEA'); f(12, 16, 2, 1, '#D2D1C8'); f(16, 16, 2, 1, '#D2D1C8'); f(14, 16, 2, 5, t)
@@ -684,10 +697,7 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
     f(2, 13, 4, 1, '#9A9A96', 'fr'); f(2, 15, 3, 1, '#9A9A96', 'fr'); f(2, 17, 4, 1, '#9A9A96', 'fr')
     f(2, 16, 3, 1, t, 'fr mk'); f(3, 20, 2, 2, '#3A3A3C', 'fr')
     f(8, 19, 4, 3, CLAY, 'fr')
-    stamp(f, 16, 9, ['.kkkk.', 'k....k', 'k....k', 'k....k', 'k....k', '.kkkk.'], { k: '#3A3A3C' }, 'it')
-    f(17, 10, 4, 4, '#F2C2AE', 'it'); f(18, 11, 3, 3, INK, 'it'); f(18, 11, 1, 1, '#fff', 'it gl')
-    f(21, 15, 1, 1, '#7A4A26', 'it'); f(22, 16, 1, 1, '#7A4A26', 'it')
-    f(23, 16, 4, 4, CLAY, 'it')
+    magnifier(f)
   },
   // Roteirista: beret, scarf and a striped shirt; writes the script on the sheet in front of him.
   roteirista: (f, t) => {
@@ -778,19 +788,23 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
     stamp(f, 22, 3, ['zzzz', '..z.', '.z..', 'zzzz'], { z: '#9a9a96' }, 'z1')
     stamp(f, 26, 0, ['zzz', '.z.', 'zzz'], { z: '#9a9a96' }, 'z2')
   },
-  // Thinking: eyes up, a claw at the chin, a thought bubble filling dot by dot.
+  // Thinking: eyes up, a claw at the chin, and a white thought bubble with a grey rim (it reads
+  // on light and dark) whose three dots fill in one by one.
   'm-think': f => {
     f(7, 10, 16, 12, CLAY); f(3, 14, 4, 4, CLAY); f(23, 16, 4, 4, CLAY); f(21, 18, 3, 2, CLAY)
     f(9, 11, 2, 2, INK); f(19, 11, 2, 2, INK)
     f(7, 22, 2, 4, CLAY, 'la'); f(17, 22, 2, 4, CLAY, 'la'); f(11, 22, 2, 4, CLAY, 'lb'); f(21, 22, 2, 4, CLAY, 'lb')
-    f(22, 6, 1, 1, '#9a9a96', 'd1'); f(24, 3, 2, 2, '#9a9a96', 'd2'); f(26, 0, 3, 3, '#9a9a96', 'd3')
+    const bubble = { k: '#8A8984', w: '#FFFFFF' }
+    stamp(f, 13, 7, ['kk', 'kk'], bubble)
+    stamp(f, 15, 4, ['.k.', 'kwk', '.k.'], bubble)
+    stamp(f, 17, 0, ['.kkkkkkkkkkk.', 'kwwwwwwwwwwwk', 'kwwwwwwwwwwwk', 'kwwwwwwwwwwwk', 'kwwwwwwwwwwwk', '.kkkkkkkkkkk.'], bubble)
+    f(19, 2, 2, 2, '#3A3A3C', 'd1'); f(22, 2, 2, 2, '#3A3A3C', 'd2'); f(25, 2, 2, 2, '#3A3A3C', 'd3')
   },
-  // Analyzing: a magnifier at the eye, sweeping.
+  // Analyzing: the big magnifier at the eye; the eyes glance left and right, then blink.
   'm-analyze': f => {
-    crabBody(f, -4, 'it')
-    stamp(f, 16, 9, ['.kkkk.', 'k....k', 'k....k', 'k....k', 'k....k', '.kkkk.'], { k: '#3A3A3C' }, 'it')
-    f(17, 10, 4, 4, '#F2C2AE', 'it'); f(18, 11, 3, 3, INK, 'it'); f(18, 11, 1, 1, '#fff', 'it gl')
-    f(21, 15, 1, 1, '#7A4A26', 'it'); f(22, 16, 1, 1, '#7A4A26', 'it')
+    crabTrunk(f)
+    f(3, 14, 4, 4, CLAY)
+    magnifier(f)
   },
   // Working: a hard hat; the hammer comes down, sparks fly.
   'm-work': f => {
