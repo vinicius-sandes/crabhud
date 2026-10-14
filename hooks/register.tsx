@@ -25,10 +25,6 @@ const activity = atom({ plugin: 'crabhud', key: 'activity' } as const, null)
 
 const TOOL = 'mcp__crabhud__progress'
 const STEP_TOOL = 'mcp__crabhud__step'
-// The same tools under savvy-progress's names, which savvy-flow's skill and agents call:
-// the optional savvy-progress bridge (bridges/savvy-progress) declares them, crabhud answers.
-const OLD_TOOL = 'mcp__savvy-progress__progress'
-const OLD_STEP_TOOL = 'mcp__savvy-progress__step'
 const PANE = 'crabhud-agents'
 const PHASES: readonly Phase[] = ['plan', 'design', 'delegate', 'review', 'close']
 const ACCENT = '#8f8cf4'
@@ -1280,14 +1276,13 @@ const registerProgress: Register = on => {
   })
 
   on('tool.call', { tool: TOOL }, reportProgress)
-  on('tool.call', { tool: OLD_TOOL }, reportProgress)
 
   on('tool.call', { tool: STEP_TOOL }, reportStep)
-  on('tool.call', { tool: OLD_STEP_TOOL }, reportStep)
 
   // Safety net: worker launches move the faint layer even if the orchestrator forgets to report.
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    const type = String(e.subagent_type ?? '')
+    // `savvy-heavy`, or `crabhud:savvy-heavy` as the Agent tool lists the mod's own agents.
+    const type = String(e.subagent_type ?? '').replace(/^[^:]*:/, '')
     if (!type.startsWith('savvy-')) return next(e)
 
     await update($, flow, prev => {
@@ -1326,7 +1321,7 @@ const registerProgress: Register = on => {
       return [...list.filter(a => a.id !== run.id), run].slice(-200)
     })
     await update($, now, () => at)
-    if (e.subagentType.startsWith('savvy-')) {
+    if (e.subagentType.replace(/^[^:]*:/, '').startsWith('savvy-')) {
       const f = await read($, flow)
       await autoOpen($, f && !f.isFinished ? f.title : 'savvy-flow')
     } else if (!(await $.ui.panes()).some(p => p.id === PANE)) {
@@ -1536,7 +1531,7 @@ const registerProgress: Register = on => {
 
   // The main agent's tool in flight: what the crab in the corner acts out.
   on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined || e.tool === 'Agent' || e.tool === TOOL || e.tool === STEP_TOOL || e.tool === OLD_TOOL || e.tool === OLD_STEP_TOOL) return next(e)
+    if (e.agentId !== undefined || e.tool === 'Agent' || e.tool === TOOL || e.tool === STEP_TOOL) return next(e)
     const id = e.tool_use_id
     await update($, activity, () => ({ id, kind: kindOf(e.tool), target: targetOf(e as unknown as Record<string, unknown>) }))
     try {

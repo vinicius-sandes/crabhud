@@ -6,6 +6,7 @@ A Claude Code mod that sits right above the prompt and beside the chat:
 - **A progress bar** for long jobs: a title, the step in progress, stretches with their own colors, and a checklist in the panel. Skills and workflows feed it through the `mcp__crabhud__progress` tool; subagents report their own steps through `mcp__crabhud__step`.
 - **The HUD** under them: the selected **model** and **effort**, the chat's **context** and **cost**, and the account's **5-hour** and **7-day limits** with their reset times, shared across every chat.
 - **The agents panel** (`/agents-info`): running, finished and planned subagents with model, effort, progress, context, cost and time, each with its own crab.
+- **`/savvy-flow`**: an orchestrated delivery flow. The session model plans, owns the design and reviews; five tiered worker agents (`savvy-fable`, `savvy-heavy`, `savvy-careful`, `savvy-medium`, `savvy-light`) implement. The flow drives the progress bar, and each worker reports its own steps to the panel.
 
 ```
 ✓ Opus 5.5  High   │   ctx ███▒····· 31%   │   5h ██▒······ 20%  ↻ 2h39m   │   7d █████▓▒·· 58%  ↻ 1d6h   │   $4.32   ▾
@@ -20,7 +21,7 @@ The loudest settings get their own look, following each surface's own effort pic
 
 When the context or a limit crosses 90%, you get a toast.
 
-crabhud brings together what used to be two mods, pixel-hud and a copy of savvy-progress. Don't load either of them alongside it.
+crabhud brings together what used to be pixel-hud, a copy of savvy-progress and savvy-flow. Don't load any of them alongside it.
 
 ## Remote Control
 
@@ -70,6 +71,7 @@ To skip the question (for example, when setting up a machine from a script), set
 - `/hud off` hides the HUD, `/hud on` shows it again, `/hud` toggles it.
 - `/hud language` asks for the language again; `/hud language en` or `/hud language pt-BR` sets it directly.
 - `/agents-info` opens or closes the agents panel.
+- `/savvy-flow <task>` (`/crabhud:savvy-flow` when another skill has the same name) runs the orchestrated flow.
 
 ## Cost
 
@@ -93,4 +95,4 @@ claude plugin test ~/.claude/mods/crabhud
 
 ## License
 
-[MIT](LICENSE). The progress bar, the crab and the agents panel start from JohnnyVizz's savvy-progress (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). The progress bar, the crab, the agents panel and `/savvy-flow` start from JohnnyVizz's [claude-kit](https://github.com/JohnnyVizz/claude-kit) (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
