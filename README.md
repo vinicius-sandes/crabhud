@@ -40,7 +40,7 @@ Works in the Claude desktop app (Code tab) and in the Claude Code terminal, on W
 1. Clone the repository into your mods folder:
 
    ```bash
-   git clone https://github.com/<user>/crabhud ~/.claude/mods/crabhud
+   git clone https://github.com/vinicius-sandes/crabhud ~/.claude/mods/crabhud
    ```
 
 2. Add this to `~/.claude/settings.json` (inside the existing top-level object):
