@@ -14,6 +14,21 @@ A Claude Code mod that sits right above the prompt and beside the chat:
 
 Click anywhere on the HUD to switch between **compact** (one line) and **expanded** (longer bars, token counts, full reset times). Your choice is remembered.
 
+## Styles
+
+Pick how the HUD's bars look with `/hud style`: a picker with a live preview of each one (keys 1–6). The desktop app and the terminal each keep their own pick; `/hud style <name>` sets both at once.
+
+```
+Pixel     ctx █▒······ 31%  │  5h █▒······ 20%  │  7d ███▓▒··· 58%
+Segments  ctx ▰▰▱▱▱▱▱▱ 31%  │  5h ▰▰▱▱▱▱▱▱ 20%  │  7d ▰▰▰▰▰▱▱▱ 58%
+Line      ctx ━━╸───── 31%  │  5h ━━╸───── 20%  │  7d ━━━━━╸── 58%
+Solid     ctx ██░░░░░░ 31%  │  5h ██░░░░░░ 20%  │  7d █████░░░ 58%
+Dots      ctx ● ○ ○ ○  31%  │  5h ◐ ○ ○ ○  20%  │  7d ● ● ○ ○  58%
+Spark     ctx ▂▃▁▁▁▁▁▁ 31%  │  5h ▂▃▁▁▁▁▁▁ 20%  │  7d ▂▃▄▅▆▁▁▁ 58%
+```
+
+**Solid** is a filled bar of colour (drawn above with █ and ░). While Claude works, the heads of segments, line, dots and spark blink, and a light sweeps along solid. **Pixel** is the default. The Remote Control row draws the same style, without the animation.
+
 The loudest settings get their own look, following each surface's own effort picker:
 
 - **Desktop app:** **Ultracode** switches palettes: the bars flow through a purple-to-pink gradient and a soft pixel wave drifts behind everything.
@@ -70,6 +85,7 @@ To skip the question (for example, when setting up a machine from a script), set
 
 - `/hud off` hides the HUD, `/hud on` shows it again, `/hud` toggles it.
 - `/hud language` asks for the language again; `/hud language en` or `/hud language pt-BR` sets it directly.
+- `/hud style` opens the style picker; `/hud style pixel|segments|line|solid|dots|spark` sets it directly.
 - `/agents-info` opens or closes the agents panel.
 - `/savvy-flow <task>` (`/crabhud:savvy-flow` when another skill has the same name) runs the orchestrated flow.
 

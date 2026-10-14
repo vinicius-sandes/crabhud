@@ -28,10 +28,22 @@ export type HudLimits = {
 
 export type HudLang = 'en' | 'pt-BR'
 
+/** How the HUD's bars look (`/hud style`), after claude-deck's six. */
+export type HudStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark'
+
+/** The style picked on each surface: the desktop app and the terminal keep their own. */
+export type HudStyles = { terminal: HudStyle; desktop: HudStyle }
+
 /** What the hooks module hands the drawing (plain JSON). */
 export type HudProps = {
   surface: 'terminal' | 'desktop'
   lang: HudLang
+  style: HudStyle
+  /**
+   * The style picker's preview: draw one sample bar this many cells long,
+   * alive, instead of the HUD.
+   */
+  preview?: number
   chat: HudChat | null
   limits: HudLimit[]
   model: string
@@ -124,6 +136,7 @@ declare module 'claude-code' {
       hidden: boolean
       alerted: string[]
       language: HudLang | null
+      style: HudStyles
       // Progress bar and agents panel
       flow: Flow | null
       agents: AgentRun[]
