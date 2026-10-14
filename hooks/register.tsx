@@ -29,7 +29,7 @@ type ProgressInput = {
   finished?: boolean
   tasks?: { title?: string; tier?: string; after?: number[] }[]
   step?: string
-  groups?: { name?: string; steps?: string[] }[]
+  groups?: { name?: string; steps?: (string | { name?: string; short?: string })[] }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -204,12 +204,22 @@ const cleanTasks = (tasks: ProgressInput['tasks']): PlannedTask[] | undefined =>
       after: (t.after ?? []).filter(n => Number.isInteger(n) && n > 0),
     }))
 
+// Step names start with a capital, on the bar and in the panel.
+const capital = (s: string): string => s.replace(/\p{L}/u, c => c.toLocaleUpperCase())
+
 const cleanGroups = (groups: ProgressInput['groups']): StepGroup[] | undefined =>
   groups
-    ?.map(g => ({ name: (g.name ?? '').trim(), steps: (g.steps ?? []).map(t => t.trim()).filter(Boolean) }))
+    ?.map(g => {
+      const steps = (g.steps ?? [])
+        .map(t => (typeof t === 'string' ? { name: t, short: '' } : { name: t?.name ?? '', short: t?.short ?? '' }))
+        .map(t => ({ name: capital(t.name.trim()), short: capital(t.short.trim()) }))
+        .filter(t => t.name)
+      return { name: (g.name ?? '').trim(), steps: steps.map(t => t.name), short: steps.map(t => t.short) }
+    })
     .filter(g => g.steps.length)
 
 const stepsOf = (f: Flow): string[] => f.groups.flatMap(g => g.steps)
+const shortsOf = (f: Flow): string[] => f.groups.flatMap(g => g.steps.map((name, i) => g.short?.[i] || name))
 
 const merge = (prev: Flow | null, input: ProgressInput): Flow => {
   // A new title means a new flow: never carry counters over from an earlier one.
@@ -235,11 +245,12 @@ const merge = (prev: Flow | null, input: ProgressInput): Flow => {
   }
 }
 
-// The step in progress: the one the caller named, else the next one in `groups`.
+// The step in progress, as short as the bar's pill wants it: the one the caller named, else
+// the next one in `groups`.
 const currentStep = (f: Flow): string => {
   if (f.isFinished) return ''
-  const steps = stepsOf(f)
-  return f.step || steps[Math.min(f.done, steps.length - 1)] || ''
+  const steps = shortsOf(f)
+  return capital(f.step) || steps[Math.min(f.done, steps.length - 1)] || ''
 }
 
 const label = (f: Flow): string => {
@@ -247,7 +258,7 @@ const label = (f: Flow): string => {
   if (f.isFinished) return s.done
   const step = currentStep(f)
   const count = f.total ? `${f.done}/${f.total}` : `${f.running} ${s.busy}`
-  if (step) return `${clip(step, 30)} · ${count}`
+  if (step) return `${clip(step, 16)} · ${count}`
   if (f.phase === 'plan') return s.plan
   if (f.phase === 'design') return s.design
   return `${f.phase === 'review' ? s.review : s.tasks} ${count}`
@@ -328,8 +339,8 @@ const fitText = (s: string, size: number, maxW: number): string => {
 
 // A stretch of the bar per group (one per skill): base, intermediária, final keep their
 // colors whichever of them are called; anything else takes the next free color.
-const GROUP_COLOR: Record<string, string> = { base: '#5B8DEF', 'intermediária': ACCENT, intermediaria: ACCENT, final: '#E39B3A' }
-const GROUP_PALETTE = ['#5B8DEF', ACCENT, '#E39B3A', '#D9649B', '#3FA7B5']
+const GROUP_COLOR: Record<string, string> = { base: '#3B7FF5', 'intermediária': '#A259E6', intermediaria: '#A259E6', final: '#F08C2E' }
+const GROUP_PALETTE = ['#3B7FF5', '#A259E6', '#F08C2E', '#D9649B', '#3FA7B5']
 const groupColor = (name: string, i: number): string => GROUP_COLOR[name.toLowerCase()] ?? GROUP_PALETTE[i % GROUP_PALETTE.length] ?? ACCENT
 
 // The row is taller when the bar carries the groups' names under it.
@@ -396,7 +407,7 @@ const rowSvg = (f: Flow, W: number, mood: Mood): string => {
     const isLive = sp === live && !f.isFinished
     const text = fitText(`${sp.name} ${sp.done}/${sp.size}`, 10.5, Math.max(10, sp.x1 - sp.x0 - 6))
     return `<rect x="${sp.x0 + 1}" y="${BAR_H + 4}" width="${Math.max(2, sp.x1 - sp.x0 - 3)}" height="2" rx="1" fill="${sp.color}" opacity="${isLive ? 0.9 : 0.4}"/>
-<text x="${sp.x0 + 2}" y="${BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${isLive ? 600 : 400}" fill="${sp.color}" opacity="${isLive || f.isFinished ? 1 : 0.75}">${xml(text)}</text>`
+<text x="${sp.x0 + 2}" y="${BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${isLive ? 600 : 400}" fill="${sp.color}" >${xml(text)}</text>`
   })
 
   const text = label(f)
@@ -406,8 +417,8 @@ const rowSvg = (f: Flow, W: number, mood: Mood): string => {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${RH}" viewBox="0 0 ${W} ${RH}">
 <style>
-.t{fill:#1f1f1f}.m{fill:#8a8a8a}.k{fill:#e4e4e2}.tk{fill:#b4b4b0}
-@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.k{fill:#2c2c2c}.tk{fill:#5a5a5a}}
+.t{fill:#1f1f1f}.m{fill:#6f6d67}.k{fill:#f7f6f2}.kb{stroke:#d9d7d0}.tk{fill:#c4c2bb}
+@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.k{fill:#2c2c2c}.kb{stroke:none}.tk{fill:#5a5a5a}}
 /* Pixels twinkle in four out-of-phase groups; a finished bar settles to a slow glow. */
 .t0,.t1,.t2,.t3{animation:tw ${f.isFinished ? 3.2 : 2.2}s ease-in-out infinite}
 .t1{animation-duration:${f.isFinished ? 3.8 : 2.8}s;animation-delay:-.7s}.t2{animation-duration:${f.isFinished ? 4.4 : 1.9}s;animation-delay:-1.3s}.t3{animation-duration:${f.isFinished ? 3.5 : 3.3}s;animation-delay:-.4s}
@@ -425,6 +436,7 @@ ${[...dots].map(([c, rs]) => `<g fill="${c}">${rs.join('')}</g>`).join('')}
 <g class="tk">${ticks.join('')}</g>
 ${gaps.join('')}
 </g>
+<rect class="kb" x="0.5" y="0.5" width="${BAR_W - 1}" height="${BAR_H - 1}" rx="${(BAR_H - 1) / 2}" fill="none" stroke-width="1"/>
 <rect x="${pillX}" width="${pillW}" height="${BAR_H}" rx="${BAR_H / 2}" fill="${color}"/>
 <text x="${pillX + pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-family="${FONT}" font-size="11" font-weight="600" fill="#ffffff">${xml(text)}</text>
 ${names.join('')}
@@ -440,7 +452,7 @@ const hairline = (W: number): string =>
 
 // No flow running: the crab and what Claude is doing, in one drawing.
 const moodSvg = (W: number, mood: Mood, text: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-<style>.t{fill:#1f1f1f}.m{fill:#8a8a8a}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>
+<style>.t{fill:#1f1f1f}.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>
 ${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
 <text x="${CRAB_W + 8}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(text.split(' · ')[0] ?? text)}</tspan><tspan class="m">${xml(text.includes(' · ') ? ' · ' + fitText(text.split(' · ').slice(1).join(' · '), 13, W - CRAB_W - 120) : '')}</tspan></text>
 </svg>`
@@ -578,7 +590,7 @@ const totals = (list: AgentRun[], at: number) => {
 // --- desktop drawings: each row is one SVG, as the band above the prompt is.
 
 const PANE_CSS = `<style>
-.t{fill:#1f1f1f}.s{fill:#6b6b68}.m{fill:#9a9a96}.k{fill:#ecebe8}.ln{stroke:#e4e4e1}.tile{fill:#f4f3f0}
+.t{fill:#1f1f1f}.s{fill:#6b6b68}.m{fill:#6f6d67}.k{fill:#ecebe8}.ln{stroke:#e4e4e1}.tile{fill:#f4f3f0}
 @media (prefers-color-scheme: dark){.t{fill:#ececec}.s{fill:#a8a8a4}.m{fill:#7d7d79}.k{fill:#2c2c2b}.ln{stroke:#333331}.tile{fill:#262625}}
 .live{animation:p 1.6s ease-in-out infinite}@keyframes p{50%{opacity:.3}}
 @media (prefers-reduced-motion: reduce){.live{animation:none}}
@@ -1113,7 +1125,16 @@ export const register: Register = (on, options) => {
               type: 'object',
               properties: {
                 name: { type: 'string', description: 'A word or two, shown under its stretch of the bar.' },
-                steps: { type: 'array', items: { type: 'string' }, description: 'The steps of this stretch, a few words each.' },
+                steps: {
+                  type: 'array',
+                  description: 'The steps of this stretch, in order: a few words each, or { name, short } to give the bar a shorter name than the panel.',
+                  items: {
+                    anyOf: [
+                      { type: 'string' },
+                      { type: 'object', properties: { name: { type: 'string' }, short: { type: 'string', description: 'One word or two, for the bar.' } }, required: ['name'] },
+                    ],
+                  },
+                },
               },
               required: ['name', 'steps'],
             },

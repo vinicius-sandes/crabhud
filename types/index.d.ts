@@ -10,6 +10,8 @@ export type PlannedTask = {
 export type StepGroup = {
   name: string
   steps: string[]
+  /** A short name per step for the bar's pill ('' = use the step's name). */
+  short: string[]
 }
 
 export type Flow = {
