@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput, SessionRateLimit, SessionUsage, ToolCallInput, TurnStepResult } from 'claude-code'
 
-import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup, Waiting } from '../types'
+import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup, TurnStats, Waiting } from '../types'
 import { BAR_CSS, GLIDE_MS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
 import type { Cell } from './bar-styles'
 import { hudSvg } from './hud-svg'
-import { CYCLE, CYCLE_S } from './hud-words'
+import { CYCLE, CYCLE_S, WORDS, pace } from './hud-words'
 import { NO_PORTRAITS, mergePortraits, portraitFor, readPortraits } from './portraits'
 import type { PortraitSet } from './portraits'
 
@@ -32,13 +32,77 @@ const activity = atom({ plugin: 'crabhud', key: 'activity' } as const, null)
 const waitingA = atom({ plugin: 'crabhud', key: 'waiting' } as const, null)
 // Sounds, off until /crabhud sound on.
 const soundA = atom({ plugin: 'crabhud', key: 'sound' } as const, false)
+// The main agent's turn: since when and how many tools it called.
+const turnA = atom({ plugin: 'crabhud', key: 'turn' } as const, null)
+// What the chats on this machine spent, by day; kept in $.store, read again for the panel.
+const spendA = atom({ plugin: 'crabhud', key: 'spend' } as const, {})
+// `/crabhud demo`: sample data on screen until this time (ms).
+const demoA = atom({ plugin: 'crabhud', key: 'demo' } as const, 0)
+// Claude's task tools (TaskCreate, TaskUpdate), by id in the order they came: the bar's steps.
+const taskItems = new Map<string, TodoItem>()
 // The calls in flight: an ask still pending after ASK_DELAY_MS is a prompt on screen.
 const inFlight = new Set<string>()
 // An ask the mode settles at once (rules, auto mode) never shows: wait this long first.
 const ASK_DELAY_MS = 600
 
-// A short clip of the mod's own (sounds/wait.wav, sounds/done.wav), when sounds are on.
-async function chime($: EngineInterface, name: 'wait' | 'done') {
+// The day a moment falls on, on this machine's calendar: "2026-10-15".
+const dayOf = (t: number): string => {
+  const d = new Date(t)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Today's and this month's spend, summed over the days kept.
+function spendNow(days: Record<string, number>, t: number): { today: number; month: number } {
+  const today = dayOf(t)
+  const month = today.slice(0, 8)
+  let sum = 0
+  for (const [day, usd] of Object.entries(days)) if (day.startsWith(month)) sum += usd
+  return { today: days[today] ?? 0, month: sum }
+}
+
+// The spend every chat adds to, in $.store: the dollars of each day, and each
+// chat's last cost (a chat's cost only grows, so what it adds is the step up).
+type SpendBook = { days: Record<string, number>; last: Record<string, number> }
+const SPEND_DAYS = 62
+const SPEND_CHATS = 50
+
+async function spendBook($: EngineInterface): Promise<SpendBook> {
+  const v = (await $.store.get('spend').catch(() => null)) as Partial<SpendBook> | null
+  return { days: { ...(v?.days ?? {}) }, last: { ...(v?.last ?? {}) } }
+}
+
+// This chat's cost moved: add the step to today's sum. The first reading of a
+// chat only marks where it stands (a resumed chat's earlier cost is already
+// in, or came before the mod counted).
+async function addSpend($: EngineInterface, cost: number | null): Promise<void> {
+  if (cost === null) return
+  const id = await $.session.id()
+  const book = await spendBook($)
+  const before = book.last[id]
+  if (before !== undefined && Math.abs(cost - before) < 0.0001) return
+  const t = await $.clock.now()
+  if (before !== undefined && cost > before) {
+    const day = dayOf(t)
+    book.days[day] = (book.days[day] ?? 0) + (cost - before)
+  }
+  delete book.last[id]
+  book.last[id] = cost
+  const chats = Object.keys(book.last)
+  for (const old of chats.slice(0, Math.max(0, chats.length - SPEND_CHATS))) delete book.last[old]
+  const oldest = dayOf(t - SPEND_DAYS * 86400000)
+  for (const day of Object.keys(book.days)) if (day < oldest) delete book.days[day]
+  await $.store.set('spend', book)
+  await update($, spendA, () => book.days)
+}
+
+// Another chat may have added to the book: read it again.
+async function pullSpend($: EngineInterface): Promise<void> {
+  const { days } = await spendBook($)
+  if (JSON.stringify(days) !== JSON.stringify(await read($, spendA))) await update($, spendA, () => days)
+}
+
+// A short clip of the mod's own (sounds/wait.wav, done.wav, finish.wav), when sounds are on.
+async function chime($: EngineInterface, name: 'wait' | 'done' | 'finish') {
   if (!(await read($, soundA))) return
   void $.audio.play({ asset: `sounds/${name}.wav` }, { gain: 0.6 }).catch(() => undefined)
 }
@@ -119,6 +183,10 @@ const STRINGS = {
     editing: 'editing',
     running_: 'running',
     browsing: 'browsing',
+    actionsN: (n: number) => `${n} ${n === 1 ? 'action' : 'actions'}`,
+    thisTurn: 'This answer',
+    today: 'Today',
+    month: 'This month',
   },
   ru: {
     pane: 'Агенты',
@@ -161,6 +229,10 @@ const STRINGS = {
     editing: 'правит',
     running_: 'запускает',
     browsing: 'смотрит',
+    actionsN: (n: number) => `${n} действ.`,
+    thisTurn: 'Этот ответ',
+    today: 'Сегодня',
+    month: 'Этот месяц',
   },
   pt: {
     pane: 'Agentes',
@@ -203,6 +275,10 @@ const STRINGS = {
     editing: 'editando',
     running_: 'rodando',
     browsing: 'pesquisando',
+    actionsN: (n: number) => `${n} ${n === 1 ? 'ação' : 'ações'}`,
+    thisTurn: 'Esta resposta',
+    today: 'Hoje',
+    month: 'Este mês',
   },
 } as const
 
@@ -214,6 +290,10 @@ const langOf = (v: unknown): Lang | null =>
   typeof v !== 'string' ? null : /^(ru|russian|рус)/i.test(v.trim()) ? 'ru' : /^(pt|portug)/i.test(v.trim()) ? 'pt' : null
 
 async function detectLang($: EngineInterface, option: unknown): Promise<Lang> {
+  // The language picked with /crabhud language comes first: the whole mod speaks it.
+  const picked = await $.store.get('language').catch(() => null)
+  if (picked === 'en') return 'en'
+  if (picked === 'pt-BR') return 'pt'
   if (option === 'en' || option === 'ru' || option === 'pt') return option
   try {
     const settings = (await $.settings.read()) as Record<string, unknown>
@@ -303,10 +383,75 @@ const label = (f: Flow): string => {
   if (f.isFinished) return s.done
   const step = currentStep(f)
   const count = f.total ? `${f.done}/${f.total}` : `${f.running} ${s.busy}`
-  if (step) return `${clip(step, 16)} · ${count}`
+  if (step) return `${clip(step, f.source === 'todo' || f.source === 'plan' ? 20 : 16)} · ${count}`
   if (f.phase === 'plan') return s.plan
   if (f.phase === 'design') return s.design
   return `${f.phase === 'review' ? s.review : s.tasks} ${count}`
+}
+
+// ---------------------------------------------------------------------------
+// The automatic bar: Claude's own task list (TodoWrite, or the task tools) and a
+// plan the person approved draw the bar too, when no skill drives it.
+
+type TodoItem = { content: string; status: string; activeForm?: string }
+
+// Words a step name may end on only if it says nothing ("Add the", "Ler o").
+const DANGLING = new Set(['a', 'an', 'the', 'of', 'to', 'for', 'and', 'in', 'on', 'with', 'o', 'os', 'as', 'um', 'uma', 'de', 'do', 'da', 'dos', 'das', 'para', 'e', 'em', 'no', 'na', 'com'])
+
+// A step name short enough for the bar's tag: whole words up to `max` letters,
+// no markup, no trailing filler; one word too long is cut.
+const shortStep = (raw: string, max = 20): string => {
+  const plain = raw
+    .replace(/[*_`~]/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/[.:;,]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (plain.length <= max) return capital(plain)
+  const words = plain.split(' ')
+  let out = ''
+  for (const w of words) {
+    const next = out ? out + ' ' + w : w
+    if (next.length > max) break
+    out = next
+  }
+  while (out.includes(' ') && DANGLING.has(out.split(' ').pop()!.toLowerCase())) out = out.split(' ').slice(0, -1).join(' ')
+  return capital(out || clip(plain, max))
+}
+
+// A bar drawn from a task list: one unnamed stretch, a step per item, the tag on
+// the item in progress (its "-ing" form, made short).
+const listFlow = (title: string, items: TodoItem[], source: 'todo' | 'plan'): Flow => {
+  const total = items.length
+  const done = items.filter(t => t.status === 'completed').length
+  const now_ = items.find(t => t.status === 'in_progress')
+  const isFinished = total > 0 && done === total
+  return {
+    ...blank(),
+    title,
+    total,
+    done,
+    phase: isFinished ? 'close' : 'delegate',
+    isFinished,
+    step: now_ ? shortStep(now_.activeForm || now_.content) : '',
+    groups: [{ name: '', steps: items.map(t => capital(t.content.trim())), short: items.map(t => shortStep(t.activeForm || t.content)) }],
+    source,
+  }
+}
+
+const unmark = (s: string): string => s.replace(/[*_`]/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim()
+
+// An approved plan's title and steps: its first heading, and its top-level
+// numbered items (else its top-level bullets, else its second-level headings).
+const planOf = (md: string): { title: string; steps: string[] } => {
+  const lines = md.split(/\r?\n/)
+  const heading = lines.find(l => /^#\s+\S/.test(l))
+  const title = heading ? unmark(heading.replace(/^#\s+/, '').replace(/^(plan|plano|план)\s*[:—–-]\s*/i, '')) : ''
+  const pick = (re: RegExp) => lines.map(l => re.exec(l)?.[1]).filter((t): t is string => !!t && !!unmark(t)).map(unmark)
+  let steps = pick(/^\s?\d+[.)]\s+(.+)/)
+  if (steps.length < 2) steps = pick(/^[-*]\s+(.+)/)
+  if (steps.length < 2) steps = pick(/^###?\s+(?:\d+[.)]?\s*)?(.+)/).filter(t => t !== title)
+  return { title, steps: steps.map(t => t.split(/\s[—–-]\s|:\s/)[0] ?? t).slice(0, 20) }
 }
 
 // The crab in the corner acts out what Claude is doing right now.
@@ -388,15 +533,40 @@ const GROUP_PALETTE = ['#3B7FF5', '#A259E6', '#F08C2E', '#D9649B', '#3FA7B5']
 const groupColor = (name: string, i: number): string => portraits.groups[name.toLowerCase()] ?? GROUP_PALETTE[i % GROUP_PALETTE.length] ?? ACCENT
 
 // The row is taller when the bar carries the groups' names under it.
-const rowHeight = (f: Flow): number => (f.groups.length ? 40 : H)
+const named = (f: Flow): boolean => f.groups.some(g => g.name)
+const rowHeight = (f: Flow): number => (named(f) ? 40 : H)
 
-const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: number; age: number }): string => {
+// The bar just reached 100%: the crab in the corner hops and pixel confetti in
+// the bar's colours bursts out of it, once (`age`, ms since then, keeps a redraw
+// from starting it over).
+const PARTY_MS = 2600
+const partySvg = (cx: number, cy: number, age: number, colors: string[]): string => {
+  // The row is short: the burst opens sideways, back over the bar, and falls within it.
+  const n = 28
+  const delay = (extra: number) => `animation-delay:${(extra - age / 1000).toFixed(2)}s`
+  const css: string[] = []
+  const bits: string[] = []
+  for (let i = 0; i < n; i++) {
+    const a = Math.PI * (0.08 + (0.84 * i) / (n - 1)) + (noise(i, 7) - 0.5) * 0.3
+    const reach = 24 + noise(i, 3) * 130
+    const dx = -Math.abs(Math.cos(a)) * reach - 8
+    const dy = (noise(i, 5) - 0.6) * 16
+    css.push(`@keyframes cf${i}{0%{transform:translate(0,0);opacity:1}55%{transform:translate(${dx.toFixed(1)}px,${dy.toFixed(1)}px);opacity:1}100%{transform:translate(${(dx * 1.12).toFixed(1)}px,${Math.min(10, dy + 9).toFixed(1)}px);opacity:0}}.cf${i}{animation:cf${i} 1.5s cubic-bezier(.2,.7,.4,1) both;${delay(0.04 * (i % 4))}}`)
+    const size = i % 3 === 0 ? 3 : 2
+    bits.push(`<rect class="cf${i}" x="${cx}" y="${cy}" width="${size}" height="${size}" fill="${colors[i % colors.length]}"/>`)
+  }
+  css.push(`@keyframes jp{0%,36%,72%,100%{transform:translateY(0)}18%,54%{transform:translateY(-3px)}}.jp{animation:jp 1.2s ease-out both;${delay(0)}}`)
+  css.push('@media (prefers-reduced-motion: reduce){[class^="cf"]{animation:none;opacity:0}.jp{animation:none}}')
+  return `<style>${css.join('')}</style>${bits.join('')}`
+}
+
+const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: number; age: number }, party?: number): string => {
   const RH = rowHeight(f)
   // The title takes what it needs, up to 40% of the row; the bar takes the rest.
   const title = fitText(f.title, 13, Math.max(60, W * 0.4))
   const BAR_X = Math.round(16 + textWidth(title, 13) + 12)
   const BAR_W = Math.max(60, W - BAR_X - 46 - CRAB_W)
-  const y0 = f.groups.length ? 3 : (H - BAR_H) / 2
+  const y0 = named(f) ? 3 : (H - BAR_H) / 2
   const mid = y0 + BAR_H / 2
 
   // Where each group starts and ends on the bar (0-1), and which one is in progress.
@@ -436,7 +606,7 @@ const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: num
     gaps: spans.slice(1).map(sp => sp.f0),
   })
   // Each group's name and count under its stretch.
-  const names = spans.map(sp => {
+  const names = spans.filter(sp => sp.name).map(sp => {
     const isLive = sp === live && !f.isFinished
     const x0 = BAR_X + Math.round(BAR_W * sp.f0)
     const x1 = BAR_X + Math.round(BAR_W * sp.f1)
@@ -457,7 +627,7 @@ ${BAR_CSS}
 ${bar}
 ${names.join('')}
 <text class="m" x="${W - CRAB_W - 6}" y="${mid + 4.5}" text-anchor="end" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums">${percent}</text>
-${CRAB_CSS}${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
+${CRAB_CSS}${party !== undefined ? `<g class="jp">${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}</g>${partySvg(W - CRAB_W / 2, 12, party, [...spans.map(sp => groupColor(sp.name, spans.indexOf(sp))), DONE, '#F2C14E', '#E46FB0'])}` : crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
 </svg>`
 }
 
@@ -478,11 +648,14 @@ ${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
 // began) sets a negative delay, so a redraw picks the loop up where it was
 // instead of starting it over. Asleep, the crab keeps still (moodSvg).
 const WALK_S = 16
-const walkSvg = (W: number, mood: Mood, text: string, age: number): string => {
+const walkSvg = (W: number, mood: Mood, text: string, age: number, note = ''): string => {
   const [head = text, ...rest] = text.split(' · ')
   const tail = rest.length ? ' · ' + fitText(rest.join(' · '), 13, Math.max(40, W * 0.45)) : ''
   const lo = Math.round(textWidth(head + tail, 13) * 1.04 + 26)
-  const hi = W - CRAB_W - 2
+  // The note only when the row has room for it and for the walk.
+  const noteW = note ? Math.round(textWidth(note, 11.5)) + 12 : 0
+  const side = noteW && W - noteW - CRAB_W - lo > 80 ? note : ''
+  const hi = W - CRAB_W - 2 - (side ? noteW : 0)
   // Where it stops: fixed per mood, so the same scene walks the same way.
   const seed = [...mood].reduce((n, ch) => n + ch.charCodeAt(0), 0)
   const xs = [0.12, 0.6, 0.34].map((f, i) => Math.round(lo + Math.max(0, hi - lo) * ((f + noise(seed, i) * 0.3) % 1)))
@@ -519,6 +692,7 @@ const walkSvg = (W: number, mood: Mood, text: string, age: number): string => {
   return `<svg xmlns="http://www.w3.org/2000/svg" data-walk="${mood}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <style>.t{fill:#1f1f1f}.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>${CRAB_CSS}${css}
 <text x="0" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(head)}</tspan><tspan class="m">${xml(tail)}</tspan></text>
+${side ? `<text class="m" x="${W}" y="${H / 2 + 4}" text-anchor="end" font-family="${FONT}" font-size="11.5" font-variant-numeric="tabular-nums">${xml(side)}</text>` : ''}
 <g class="mv">${smoke}<g class="wk">${walking}</g><g class="st">${crab(0, 0, costume, false, true, 0.9)}</g></g></svg>`
 }
 
@@ -638,6 +812,14 @@ const fmtTokens = (n: number): string =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${Math.round(n)}`
 
 const fmtCost = (usd: number): string => `$${usd < 10 ? usd.toFixed(2) : usd.toFixed(1)}`
+
+// A turn's time, short: 45s, 1m12s, 1h05m.
+const fmtSpan = (ms: number): string => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
+}
 
 const fmtTime = (ms: number): string => {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -935,6 +1117,28 @@ ${tile(0, s.cost, '≈' + fmtCost(t.cost))}${tile(1, s.tokens, fmtTokens(t.token
 
 const headerHeight = (title: string): number => (title ? 72 : 44)
 
+// The panel's line of the moment: this answer (actions, time) at the left,
+// today's and this month's spend (every chat on this machine) at the right.
+type UsageLine = { turn: string; spend: string }
+function usageLine(turn: TurnStats | null, days: Record<string, number>, t: number): UsageLine {
+  const s = tr()
+  const { today, month } = spendNow(days, t)
+  return {
+    turn: turn ? `${s.thisTurn}: ${s.actionsN(turn.actions)} · ${fmtSpan((turn.endedAt ?? t) - turn.startedAt)}` : '',
+    spend: month > 0 ? `${s.today} ≈${fmtCost(today)} · ${s.month} ≈${fmtCost(month)}` : '',
+  }
+}
+
+const usageSvg = (W: number, u: UsageLine): string => {
+  const right = u.spend ? textWidth(u.spend, 12) + 12 : 0
+  return svg(
+    W,
+    22,
+    `${u.turn ? `<text class="s" x="0" y="15" font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">${xml(fitText(u.turn, 12, W - right))}</text>` : ''}
+${u.spend ? `<text class="s" x="${W}" y="15" text-anchor="end" font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">${xml(u.spend)}</text>` : ''}`,
+  )
+}
+
 // The flow's steps, group by group: done, in progress, still to come. Two columns when wide.
 const STEP_ROW = 18
 const stepColumns = (W: number): number => (W >= 380 ? 2 : 1)
@@ -1158,11 +1362,12 @@ async function progressStart($: EngineInterface, options: Parameters<Register>[1
   // The agents pane stays open, like the file tree: empty until a subagent runs.
   if (!(await $.ui.panes()).some(p => p.id === PANE)) void $.ui.open({ id: PANE, title: tr().pane })
 
-  // Ticks the running agents' clocks; quiet when nothing runs.
+  // Ticks the running agents' clocks and the main turn's; quiet when nothing runs.
   $.clock.every(1000, () => {
     void (async () => {
       const list = await read($, agents)
-      if (!list.some(a => a.status === 'running')) return
+      const turn = await read($, turnA)
+      if (!list.some(a => a.status === 'running') && !(turn && turn.endedAt === undefined)) return
       const at = await $.clock.now()
       await update($, now, () => at)
     })()
@@ -1181,7 +1386,7 @@ async function progressAfterStep(
 
   const model = usage.model || e.model
   await update($, agents, list =>
-    list.map(a =>
+    list.map((a): AgentRun =>
       a.agentId !== agentId
         ? a
         : {
@@ -1209,21 +1414,183 @@ async function progressAfterStep(
   )
 }
 
+// A bar drawn from Claude's own list leaves this long after it reached 100%.
+const AUTO_CLEAR_MS = 10_000
+
+// Every change to the bar goes through here: a step forward on the same bar
+// remembers where the tag was (its glide), and reaching 100% starts the crab's
+// celebration and a chime; a bar from Claude's own list then leaves on its own.
+async function setFlow($: EngineInterface, change: (prev: Flow | null) => Flow | null): Promise<Flow | null> {
+  const at = await $.clock.now()
+  const hit: { done: Flow | null } = { done: null }
+  const next = await update($, flow, p => {
+    const n = change(p)
+    if (!n || n === p) return n
+    const same = !!p && !p.isFinished && p.title === n.title && (p.source ?? 'tool') === (n.source ?? 'tool')
+    let out = n
+    if (same && p && ratio(n) !== ratio(p)) out = { ...out, moved: { from: ratio(p) * 100, at } }
+    if (n.isFinished && !(p?.isFinished && p.title === n.title)) {
+      out = { ...out, doneAt: at }
+      hit.done = out
+    }
+    return out
+  })
+  const done = hit.done
+  if (done) {
+    await chime($, 'finish')
+    if (done.source === 'todo' || done.source === 'plan') {
+      $.clock.after(AUTO_CLEAR_MS, () => void update($, flow, f => (f && f.isFinished && f.doneAt === done.doneAt ? null : f)))
+    }
+  }
+  return next
+}
+
+// A skill's bar (the progress tool) wins over Claude's own list while it runs.
+const toolBarOn = (f: Flow | null): boolean => !!f && !f.isFinished && (f.source ?? 'tool') === 'tool'
+
+// Claude's task list, as it now stands: the bar follows it.
+async function showList($: EngineInterface, items: TodoItem[]) {
+  await setFlow($, p => {
+    if (toolBarOn(p)) return p
+    if (!items.length) return p && p.source === 'todo' ? null : p
+    // The list carries on the plan it came from, and keeps its title while it runs.
+    const keep = p && !p.isFinished && (p.source === 'plan' || p.source === 'todo')
+    return listFlow(keep && p ? p.title : tr().tasks, items, 'todo')
+  })
+}
+
+// A plan the person approved: its steps on the bar until a task list takes over.
+async function showPlan($: EngineInterface, md: string) {
+  const plan = planOf(md)
+  if (plan.steps.length < 2) return
+  const title = capital(clip(plan.title, 48)) || tr().plan
+  await setFlow($, p => (toolBarOn(p) ? p : listFlow(title, plan.steps.map(content => ({ content, status: 'pending' })), 'plan')))
+}
+
+// /crabhud demo: twenty seconds of sample data (a bar that walks to 100%, two
+// agents, the amber wait, limits when there are none), then everything back
+// as it was. What was on screen is kept aside, not lost.
+const DEMO_MS = 20_000
+const DEMO_STEP_MS = 2_400
+let demoKept: { flow: Flow | null; limits: HudLimits | null; hadLimits: boolean } | null = null
+
+const DEMO_TEXT = {
+  en: { title: 'crabhud demo', groups: [['Plan', ['Read the code', 'Sketch']], ['Build', ['Bar', 'Rings', 'Panel']], ['Check', ['Tests']]], agents: ['Draw the rings', 'Check the tests'], ask: 'npm test' },
+  ru: { title: 'демо crabhud', groups: [['План', ['Читать код', 'Эскиз']], ['Сборка', ['Полоса', 'Кольца', 'Панель']], ['Проверка', ['Тесты']]], agents: ['Нарисовать кольца', 'Проверить тесты'], ask: 'npm test' },
+  pt: { title: 'demo do crabhud', groups: [['Planejar', ['Ler o código', 'Esboçar']], ['Fazer', ['Barra', 'Anéis', 'Painel']], ['Conferir', ['Testes']]], agents: ['Desenhar os anéis', 'Conferir os testes'], ask: 'npm test' },
+} as const
+
+async function startDemo($: EngineInterface): Promise<void> {
+  const at = await $.clock.now()
+  if (!demoKept) {
+    const limits = await read($, limitsA)
+    demoKept = { flow: await read($, flow), limits, hadLimits: !!limits && limits.limits.length > 0 }
+  }
+  const until = at + DEMO_MS
+  await update($, demoA, () => until)
+  const D = DEMO_TEXT[lang]
+  const groups: StepGroup[] = D.groups.map(([name, steps]) => ({ name, steps: [...steps], short: steps.map(() => '') }))
+  const total = groups.reduce((n, g) => n + g.steps.length, 0)
+  const bar = (done: number): Flow => ({
+    title: D.title,
+    total,
+    done,
+    running: 0,
+    phase: done >= total ? 'close' : 'delegate',
+    isFinished: done >= total,
+    tasks: [],
+    step: '',
+    groups,
+    source: 'tool',
+  })
+  await update($, flow, () => null)
+  await setFlow($, () => bar(0))
+  if (!demoKept.hadLimits) {
+    const hour = 3600000
+    await update($, limitsA, () => ({
+      limits: [
+        { kind: 'five_hour', percent: 37, resetsAt: at + 2 * hour + 10 * 60000, rate: 12 },
+        { kind: 'seven_day', percent: 64, resetsAt: at + 3 * 24 * hour, rate: 0.6 },
+      ],
+      at: -1,
+    }))
+  }
+  const live = async () => (await read($, demoA)) === until
+  for (let done = 1; done <= total; done++) {
+    $.clock.after(done * DEMO_STEP_MS, () => void (async () => {
+      if (await live()) await setFlow($, () => bar(done))
+    })())
+  }
+  const agent = (i: number, type: string, model: string): AgentRun => ({
+    id: `demo-${i}`,
+    type,
+    description: D.agents[i],
+    model,
+    status: 'running',
+    startedAt: at + 3000,
+    contextTokens: 42_000 + i * 31_000,
+    contextMax: 200_000,
+    tokens: 58_000 + i * 20_000,
+    costUsd: 0.38 + i * 0.27,
+    steps: 6,
+    round: 1,
+    stepDone: 1,
+    stepTotal: 4,
+    stepNote: D.groups[1][1][1 + i] ?? '',
+  })
+  $.clock.after(3000, () => void (async () => {
+    if (!(await live())) return
+    const now_ = await $.clock.now()
+    await update($, now, () => now_)
+    await update($, agents, l => [...l.filter(a => !a.id.startsWith('demo-')), agent(0, 'crabhud:savvy-medium', 'claude-opus-5-5'), agent(1, 'crabhud:savvy-light', 'claude-sonnet-5-5')])
+  })())
+  $.clock.after(6500, () => void (async () => {
+    if (await live()) await update($, agents, l => l.map(a => (a.id.startsWith('demo-') ? { ...a, stepDone: 3 } : a)))
+  })())
+  // The amber wait, for a few seconds, as when Claude asks to run a command.
+  $.clock.after(8000, () => void (async () => {
+    if (await live()) await startWaiting($, { kind: 'permission', tool: 'Bash', detail: D.ask, id: 'demo-ask' })
+  })())
+  $.clock.after(11500, () => void (async () => {
+    if (await live()) await update($, waitingA, w => (w?.id === 'demo-ask' ? null : w))
+  })())
+  $.clock.after(12500, () => void (async () => {
+    if (!(await live())) return
+    const end = await $.clock.now()
+    await update($, agents, l => l.map(a => (a.id.startsWith('demo-') ? { ...a, status: 'done' as const, endedAt: end, stepDone: 4 } : a)))
+  })())
+  $.clock.after(DEMO_MS, () => void (async () => {
+    if (await live()) await stopDemo($)
+  })())
+}
+
+async function stopDemo($: EngineInterface): Promise<void> {
+  await update($, demoA, () => 0)
+  await update($, waitingA, w => (w?.id === 'demo-ask' ? null : w))
+  await update($, agents, l => l.filter(a => !a.id.startsWith('demo-')))
+  const kept = demoKept
+  demoKept = null
+  if (!kept) return
+  // Only what the demo drew goes back: a real bar or reading that came meanwhile stays.
+  const title = DEMO_TEXT[lang].title
+  await update($, flow, f => (f && f.title === title ? kept.flow : f))
+  await update($, limitsA, l => (l && l.at === -1 ? kept.limits : l))
+}
+
+// A tool call that ran and answered (no deny, no error).
+const answered = (r: { deny?: string; isError?: boolean }): boolean => r.deny === undefined && !r.isError
+
 // The flow's progress, reported to the bar.
 async function reportProgress($: EngineInterface, e: ToolCallInput) {
   const input = e as unknown as ProgressInput
-  const prev = await read($, flow)
+  // A bar of Claude's own list gives way to the skill's.
+  const own = (p: Flow | null) => (p && (p.source ?? 'tool') !== 'tool' ? null : p)
+  const prev = own(await read($, flow))
   if (isNewFlow(prev, input) && input.title !== undefined) {
     // A new flow starts with a clean list; agents still running stay.
     await update($, agents, list => list.filter(a => a.status === 'running'))
   }
-  const at = await $.clock.now()
-  const next = await update($, flow, p => {
-    const merged = merge(p, input)
-    // A step forward on the same flow: remember where the tag was, for its glide.
-    if (!p || !merged || isNewFlow(p, input) || ratio(merged) === ratio(p)) return merged
-    return { ...merged, moved: { from: ratio(p) * 100, at } }
-  })
+  const next = await setFlow($, p => ({ ...merge(own(p), input), source: 'tool' }))
   if (next && input.tasks?.length) await autoOpen($, next.title)
   return { result: `ok: ${label(next ?? blank())}` }
 }
@@ -1253,6 +1620,57 @@ const registerProgress: Register = on => {
   on('tool.call', { tool: TOOL }, reportProgress)
 
   on('tool.call', { tool: STEP_TOOL }, reportStep)
+
+  on('turn.start', async ($, e, next) => {
+    const started = await next(e)
+    const at = await $.clock.now()
+    await update($, turnA, t => (!t || t.endedAt !== undefined ? { startedAt: at, actions: 0 } : t))
+    return started
+  })
+
+  // Claude's own task list, and a plan the person approved, draw the bar too.
+  on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {
+    const r = await next(e)
+    const todos = (e as unknown as { todos?: TodoItem[] }).todos
+    if (!e.agentId && answered(r) && Array.isArray(todos)) await showList($, todos.filter(t => typeof t?.content === 'string' && t.content.trim()))
+    return r
+  })
+
+  on('tool.call', { tool: 'TaskCreate' }, async ($, e, next) => {
+    const r = await next(e)
+    const input = e as unknown as { subject?: string; activeForm?: string }
+    const id = (r.result as { task?: { id?: unknown } } | undefined)?.task?.id
+    if (!e.agentId && answered(r) && id !== undefined && input.subject) {
+      taskItems.set(String(id), { content: input.subject, status: 'pending', activeForm: input.activeForm })
+      await showList($, [...taskItems.values()])
+    }
+    return r
+  })
+
+  on('tool.call', { tool: 'TaskUpdate' }, async ($, e, next) => {
+    const r = await next(e)
+    const input = e as unknown as { taskId?: string; status?: string; subject?: string; activeForm?: string }
+    const id = String(input.taskId ?? '')
+    const item = taskItems.get(id)
+    if (!e.agentId && answered(r) && item) {
+      if (input.status === 'deleted') taskItems.delete(id)
+      else
+        taskItems.set(id, {
+          content: input.subject || item.content,
+          status: input.status || item.status,
+          activeForm: input.activeForm || item.activeForm,
+        })
+      await showList($, [...taskItems.values()])
+    }
+    return r
+  })
+
+  on('tool.call', { tool: 'ExitPlanMode' }, async ($, e, next) => {
+    const r = await next(e)
+    const plan = (r.result as { plan?: unknown } | undefined)?.plan
+    if (!e.agentId && answered(r) && typeof plan === 'string') await showPlan($, plan)
+    return r
+  })
 
   // Safety net: worker launches move the faint layer even if the orchestrator forgets to report.
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
@@ -1311,7 +1729,7 @@ const registerProgress: Register = on => {
     if (agentId) {
       const at = await $.clock.now()
       await update($, agents, list =>
-        list.map(a => {
+        list.map((a): AgentRun => {
           if (a.agentId !== agentId) return a
           // A run whose steps went unseen still gets the turn's own sum.
           const fallback = a.steps === 0 && e.usage
@@ -1337,6 +1755,10 @@ const registerProgress: Register = on => {
     } else {
       // The main turn ended: nothing is waiting on the person any more.
       await update($, waitingA, () => null)
+      const at = await $.clock.now()
+      await update($, turnA, t => (t && t.endedAt === undefined ? { ...t, endedAt: at } : t))
+      // A plan no task list took over ends with the answer.
+      if (e.reason === 'answer') await setFlow($, p => (p && p.source === 'plan' && !p.isFinished ? { ...p, done: p.total, isFinished: true, phase: 'close', step: '' } : p))
       await chime($, 'done')
     }
     return next(e)
@@ -1376,6 +1798,9 @@ const registerProgress: Register = on => {
     )
     const isEmpty = list.length === 0 && planned.length === 0
     const summary = `≈${fmtCost(t.cost)}, ${fmtTokens(t.tokens)} ${s.tokensWord}, ${fmtTime(t.time)}`
+    const usage = usageLine(await read($, turnA), await read($, spendA), Math.max(at, await $.clock.now()))
+    const hasUsage = !!(usage.turn || usage.spend)
+    const usageAlt = [usage.turn, usage.spend].filter(Boolean).join(' · ')
 
     const styles = await read($, styleA)
     if (e.surface === 'desktop' && 'Svg' in ui) {
@@ -1391,6 +1816,7 @@ const registerProgress: Register = on => {
         return (
           <Box flexDirection="column" gap={1}>
             <Svg source={compactSvg(W, list, planned, t)} alt={`${list.length} ${s.agentsCount}, ${summary}`} width={W} height={32} />
+            {hasUsage && <Svg key="usage" source={usageSvg(W, usage)} alt={usageAlt} width={W} height={22} />}
             {toggleCompact}
           </Box>
         )
@@ -1398,6 +1824,7 @@ const registerProgress: Register = on => {
       return (
         <Box flexDirection="column">
           <Svg source={headerSvg(W, title, t)} alt={title ? `${title}: ${summary}` : summary} width={W} height={headerHeight(title)} />
+          {hasUsage && <Svg key="usage" source={usageSvg(W, usage)} alt={usageAlt} width={W} height={22} />}
           {f && f.groups.length > 0 && (
             <Svg source={stepsSvg(W, f)} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
           )}
@@ -1467,6 +1894,8 @@ const registerProgress: Register = on => {
         <Text dimColor>
           ≈{fmtCost(t.cost)} · {fmtTokens(t.tokens)} {s.tokensWord} · {fmtTime(t.time)}
         </Text>
+        {usage.turn ? <Text dimColor wrap="truncate-end">{usage.turn}</Text> : null}
+        {usage.spend ? <Text dimColor wrap="truncate-end">{usage.spend}</Text> : null}
         {p.isCompact ? (
           <Text wrap="truncate-end">
             {[...running, ...finished].map(a => (
@@ -1535,6 +1964,8 @@ const registerProgress: Register = on => {
         const question = typeof qs?.[0]?.question === 'string' ? qs[0].question : ''
         await startWaiting($, { kind: 'answer', tool: e.tool, detail: question, id })
       }
+      if (e.agentId === undefined && e.tool !== TOOL && e.tool !== STEP_TOOL)
+        await update($, turnA, t => (t && t.endedAt === undefined ? { ...t, actions: t.actions + 1 } : t))
       if (e.agentId !== undefined || e.tool === 'Agent' || e.tool === TOOL || e.tool === STEP_TOOL) return await next(e)
       await update($, activity, () => ({ id, kind: kindOf(e.tool), target: targetOf(e as unknown as Record<string, unknown>) }))
       try {
@@ -1608,13 +2039,18 @@ const registerProgress: Register = on => {
     )
     const t = await $.clock.now()
     if (scene.mood !== mood) scene = { mood, at: t }
+    // The turn so far, beside the walking crab: how many tools, how long. Reading
+    // `now` redraws the row as the clock ticks.
+    await read($, now)
+    const turn = await read($, turnA)
+    const note = e.props.isWorking && turn && turn.endedAt === undefined ? `${tr().actionsN(turn.actions)} · ${fmtSpan(t - turn.startedAt)}` : ''
 
     if (f === null) {
       if (waitRow) return above(waitRow)
       if (vector) {
         const { Svg } = ui
         // At work the crab walks the free part of the row; asleep it keeps still.
-        const art = mood === 'sleep' ? moodSvg(width, mood, status) : walkSvg(width, mood, status, t - scene.at)
+        const art = mood === 'sleep' ? moodSvg(width, mood, status) : walkSvg(width, mood, status, t - scene.at, note)
         return above(
           <Box flexDirection="row" alignItems="center" gap={1}>
             <Svg source={art} alt={status} width={width} height={H} />
@@ -1628,6 +2064,7 @@ const registerProgress: Register = on => {
           <Text wrap="truncate-end" dimColor={mood === 'sleep'}>
             {status}
           </Text>
+          {note ? <Text dimColor>{note}</Text> : null}
           {crewButton}
         </Box>,
       )
@@ -1659,9 +2096,11 @@ const registerProgress: Register = on => {
       const { Svg } = ui
       // A step just taken: the tag glides from where it was.
       const glide = f.moved && t - f.moved.at < GLIDE_MS ? { p: f.moved.from, age: t - f.moved.at } : undefined
+      // Just reached 100%: the crab's celebration.
+      const party = f.isFinished && f.doneAt !== undefined && t - f.doneAt < PARTY_MS ? t - f.doneAt : undefined
       return above(withWait(
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(f, width, mood, (await read($, styleA)).desktop, glide)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
+          <Svg source={rowSvg(f, width, mood, (await read($, styleA)).desktop, glide, party)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
           {crewButton}
           {dismiss}
         </Box>,
@@ -1714,13 +2153,13 @@ const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
 const STYLE_PANE = 'crabhud-style'
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
-const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language) or turn sounds on and off (sound)'
+const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), see everything as text (status) or watch a demo (demo)'
 
 const TEXT = {
   en: {
     hidden: 'HUD hidden. Use /crabhud on to show it again.',
     shown: 'HUD shown.',
-    sound: (isOn: boolean) => (isOn ? 'Sounds on: a chime when Claude waits for you and when it finishes.' : 'Sounds off.'),
+    sound: (isOn: boolean) => (isOn ? 'Sounds on: a chime when Claude waits for you, when it finishes, and a little fanfare when a bar reaches 100%.' : 'Sounds off.'),
     language: (name: string) => `HUD language: ${name}.`,
     style: (name: string) => `HUD style: ${name}.`,
     noStyle: (name: string, all: string) => `No style "${name}". Pick one of: ${all}.`,
@@ -1732,11 +2171,38 @@ const TEXT = {
     resets: (t: string) => ` (resets in ${t})`,
     at: (p: number) => ` at ${p}%`,
     now: 'now',
+    status: {
+      head: 'crabhud · status',
+      model: 'Model',
+      effort: 'effort',
+      context: 'Context',
+      of: 'of',
+      chat: 'This chat',
+      bar: 'Bar',
+      noBar: 'none now',
+      ofSteps: (d: number, t: number) => `${d} of ${t}`,
+      finished: 'finished',
+      agents: 'Agents',
+      noAgents: 'none yet',
+      running: 'running',
+      done: 'finished',
+      planned: 'planned',
+      look: 'Style',
+      inApp: 'in the app',
+      inTerminal: 'in the terminal',
+      soundOn: 'sounds on',
+      soundOff: 'sounds off',
+      language: 'language',
+      noLimits: 'Limits: no reading yet',
+      hidden: 'The HUD is hidden (/crabhud on shows it).',
+    },
+    demo: 'Demo: 20 seconds of sample bars, agents and limits. Nothing real changes.',
+    demoOff: 'Demo stopped.',
   },
   'pt-BR': {
     hidden: 'HUD escondido. Use /crabhud on para mostrar.',
     shown: 'HUD visível.',
-    sound: (isOn: boolean) => (isOn ? 'Sons ligados: um toque quando o Claude espera você e quando termina.' : 'Sons desligados.'),
+    sound: (isOn: boolean) => (isOn ? 'Sons ligados: um toque quando o Claude espera você, quando termina, e uma fanfarra quando a barra chega a 100%.' : 'Sons desligados.'),
     language: (name: string) => `Idioma do HUD: ${name}.`,
     style: (name: string) => `Estilo do HUD: ${name}.`,
     noStyle: (name: string, all: string) => `Não há o estilo "${name}". Escolha um destes: ${all}.`,
@@ -1748,6 +2214,33 @@ const TEXT = {
     resets: (t: string) => ` (reseta em ${t})`,
     at: (p: number) => ` em ${p}%`,
     now: 'agora',
+    status: {
+      head: 'crabhud · resumo',
+      model: 'Modelo',
+      effort: 'esforço',
+      context: 'Contexto',
+      of: 'de',
+      chat: 'Este chat',
+      bar: 'Barra',
+      noBar: 'nenhuma agora',
+      ofSteps: (d: number, t: number) => `${d} de ${t}`,
+      finished: 'concluída',
+      agents: 'Agentes',
+      noAgents: 'nenhum ainda',
+      running: 'rodando',
+      done: 'terminados',
+      planned: 'planejados',
+      look: 'Estilo',
+      inApp: 'no app',
+      inTerminal: 'no terminal',
+      soundOn: 'sons ligados',
+      soundOff: 'sons desligados',
+      language: 'idioma',
+      noLimits: 'Limites: sem leitura ainda',
+      hidden: 'O HUD está escondido (/crabhud on mostra).',
+    },
+    demo: 'Demonstração: 20 segundos de barras, agentes e limites de exemplo. Nada de verdade muda.',
+    demoOff: 'Demonstração encerrada.',
   },
 }
 
@@ -1890,9 +2383,10 @@ async function loadLanguage($: EngineInterface): Promise<HudLang | null> {
   return asLang(settings.pluginConfigs?.crabhud?.options?.language)
 }
 
-async function chooseLanguage($: EngineInterface, lang: HudLang): Promise<void> {
-  await update($, langA, () => lang)
-  await $.store.set('language', lang)
+async function chooseLanguage($: EngineInterface, pick: HudLang): Promise<void> {
+  lang = pick === 'pt-BR' ? 'pt' : 'en'
+  await update($, langA, () => pick)
+  await $.store.set('language', pick)
 }
 
 // Toast once per gauge when it crosses 90%; re-arm below 80%.
@@ -1951,7 +2445,9 @@ async function publish($: EngineInterface, readings: HudLimit[]) {
 // This chat's usage as the engine has it now: context and cost after every
 // response (not only at the end of a turn), limits when they moved.
 async function applyUsage($: EngineInterface, u: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>) {
-  await setChat($, toChat(u))
+  const chat = toChat(u)
+  await setChat($, chat)
+  await addSpend($, chat.costUsd)
   const key = JSON.stringify(u.rateLimits)
   if (key !== ownLimits) {
     ownLimits = key
@@ -2223,6 +2719,8 @@ async function hudStart($: EngineInterface): Promise<void> {
   await pullCompactWindow($)
   const u = await $.session.usage()
   await setChat($, toChat(u))
+  await addSpend($, toChat(u).costUsd)
+  await pullSpend($)
   ownLimits = JSON.stringify(u.rateLimits)
   // The first reading also starts the pace log.
   const startedAt = await $.clock.now()
@@ -2253,6 +2751,7 @@ async function hudStart($: EngineInterface): Promise<void> {
         else if (tick % 4 === 0) await pullTerminal($)
         if (tick % 2 === 0) await pullShared($)
         if (tick % 40 === 0) await pullCompactWindow($)
+        if (tick % 40 === 20) await pullSpend($)
         if (tick % 4 === 0) await applyUsage($, await $.session.usage())
         if (record === null && tick % 200 === 0) record = await findRecord($)
         if (tick % 120 === 0) await update($, tickA, n => n + 1)
@@ -2375,6 +2874,61 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
   )
 }
 
+// /crabhud status: everything the mod shows, as text to read or copy.
+async function statusText($: EngineInterface): Promise<string> {
+  const lang = (await read($, langA)) ?? 'en'
+  const T = TEXT[lang]
+  const S = T.status
+  const W = WORDS[lang]
+  const [chat, limits, model, effort, ultra, f, list, turn, days, styles, sound, hidden, t] = await Promise.all([
+    read($, chatA),
+    read($, limitsA),
+    read($, modelA),
+    read($, effortA),
+    read($, ultraA),
+    read($, flow),
+    read($, agents),
+    read($, turnA),
+    read($, spendA),
+    read($, styleA),
+    read($, soundA),
+    read($, hiddenA),
+    $.clock.now(),
+  ])
+  const effortText = [effort ? (W.effortNames[effort] ?? effort) : null, ultra ? 'Ultracode' : null].filter(Boolean).join(' · ')
+  const lines = [S.head, '']
+  lines.push(`${S.model}: ${model || '—'}${effortText ? ` · ${S.effort} ${effortText}` : ''}`)
+  if (chat?.ctxPercent != null) {
+    const tokens = chat.ctxTokens != null ? ` (${fmtTokens(chat.ctxTokens)} ${S.of} ${fmtTokens(chat.ctxWindow)})` : ''
+    lines.push(`${S.context}: ${Math.round(chat.ctxPercent)}%${tokens}`)
+  }
+  const shown = limits?.limits ?? []
+  if (shown.length === 0) lines.push(S.noLimits)
+  for (const l of shown) {
+    const isReset = l.resetsAt !== null && l.resetsAt <= t
+    const left = l.resetsAt && !isReset ? T.resets(fmtLeft(l.resetsAt - t, T.now)).replace(/^ \((.*)\)$/, '$1') : ''
+    const p = pace({ ...l, isReset }, t, W, false)
+    const parts = [`${isReset ? 0 : Math.round(l.percent)}%`, left, p.rate, p.out].filter(Boolean)
+    lines.push(`${T.limit[l.kind] ?? l.kind}: ${parts.join(' · ')}`)
+  }
+  const { today, month } = spendNow(days, t)
+  lines.push(`${S.chat}: ≈${fmtCost(chat?.costUsd ?? 0)} · ${tr().today} ≈${fmtCost(today)} · ${tr().month} ≈${fmtCost(month)}`)
+  if (f) {
+    const step = !f.isFinished && currentStep(f) ? ` · ${currentStep(f)}` : ''
+    lines.push(`${S.bar}: ${f.title} · ${f.isFinished ? S.finished : S.ofSteps(f.done, f.total)}${step}`)
+  } else {
+    lines.push(`${S.bar}: ${S.noBar}`)
+  }
+  if (turn) lines.push(`${tr().thisTurn}: ${tr().actionsN(turn.actions)} · ${fmtSpan((turn.endedAt ?? t) - turn.startedAt)}`)
+  const running = list.filter(a => a.status === 'running').length
+  const planned = plannedOf(f, list).length
+  const crew = [running ? `${running} ${S.running}` : '', list.length - running ? `${list.length - running} ${S.done}` : '', planned ? `${planned} ${S.planned}` : ''].filter(Boolean)
+  lines.push(`${S.agents}: ${crew.join(' · ') || S.noAgents}`)
+  lines.push(`${S.look}: ${STYLE_NAMES[styles.desktop]} ${S.inApp} · ${STYLE_NAMES[styles.terminal]} ${S.inTerminal} · ${sound ? S.soundOn : S.soundOff} · ${S.language} ${LANG_NAME[lang]}`)
+  if (hidden) lines.push('', S.hidden)
+  return lines.join('\n')
+}
+
 const registerHud: Register = on => {
   on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => stylePicker($, e))
 
@@ -2399,6 +2953,16 @@ const registerHud: Register = on => {
 
   on('command.run', { command: 'crabhud' }, async ($, e) => {
     const [arg = '', value = ''] = e.args.trim().split(/\s+/)
+    if (/^status$/i.test(arg)) return { text: await statusText($) }
+    if (/^demo$/i.test(arg)) {
+      const T = TEXT[(await read($, langA)) ?? 'en']
+      if (/^(off|stop)$/i.test(value)) {
+        await stopDemo($)
+        return { text: T.demoOff }
+      }
+      await startDemo($)
+      return { text: T.demo }
+    }
     if (/^style$/i.test(arg)) {
       const T = TEXT[(await read($, langA)) ?? 'en']
       // A bare `/crabhud style` opens the picker; `/crabhud style dots` sets it on

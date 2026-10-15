@@ -39,7 +39,7 @@ SOFTWARE.
 ## claude-deck (nvr0x5): bar styles and the style picker
 
 From [claude-deck](https://github.com/nvr0x5/claude-deck): the bar styles in `hooks/bar-styles.ts` (pixel, segments,
-line, solid, dots, spark; classic is pixel-hud's own blocks), drawn in SVG for the desktop app and in text for the
+line, solid, dots, spark), drawn in SVG for the desktop app and in text for the
 terminal, and the `/crabhud style` picker with live previews, follow its `/deck style`, adapted to the progress bar,
 the HUD's percentage gauges and the agents panel.
 
