@@ -1365,6 +1365,10 @@ async function progressStart($: EngineInterface, options: Parameters<Register>[1
     description: 'Show or hide the panel of subagents: running, finished and planned, with model, context, cost and time',
   })
 
+  // A chat reopened (the app restarted, the computer slept) finds its bar as it left it.
+  const kept = await keptBar($)
+  if (kept?.flow && !kept.flow.isFinished && !(await read($, flow))) await update($, flow, () => kept.flow)
+
   // The agents pane stays open, like the file tree: empty until a subagent runs.
   if (!(await $.ui.panes()).some(p => p.id === PANE)) void $.ui.open({ id: PANE, title: tr().pane })
 
@@ -1587,16 +1591,61 @@ async function stopDemo($: EngineInterface): Promise<void> {
 const answered = (r: { deny?: string; isError?: boolean }): boolean => r.deny === undefined && !r.isError
 
 // The flow's progress, reported to the bar.
+// The skill's bar, kept on disk per chat in $.store: the engine's own state
+// lives as long as the chat's process, so a chat reopened would lose it, and a
+// lone `done` would then draw an empty bar. Recent chats only.
+type KeptBar = { flow: Flow | null; at: number }
+const KEPT_CHATS = 30
+const KEPT_MS = 14 * 24 * 3600000
+
+async function keptBars($: EngineInterface): Promise<Record<string, KeptBar>> {
+  const v = (await $.store.get('bars').catch(() => null)) as Record<string, KeptBar> | null
+  return v && typeof v === 'object' ? { ...v } : {}
+}
+
+async function keptBar($: EngineInterface): Promise<KeptBar | null> {
+  const id = await $.session.id().catch(() => '')
+  return id ? ((await keptBars($))[id] ?? null) : null
+}
+
+// `null` marks a bar the person closed (✕).
+async function keepBar($: EngineInterface, f: Flow | null): Promise<void> {
+  const id = await $.session.id().catch(() => '')
+  if (!id) return
+  const at = await $.clock.now()
+  const all = await keptBars($)
+  all[id] = { flow: f, at }
+  const recent = Object.entries(all)
+    .filter(([, b]) => at - b.at < KEPT_MS)
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, KEPT_CHATS)
+  await $.store.set('bars', Object.fromEntries(recent)).catch(() => undefined)
+}
+
+const NO_BAR =
+  'no bar in this chat to move: send `title` and the full `groups` (or `total`) with `done` to draw it again'
+
 async function reportProgress($: EngineInterface, e: ToolCallInput) {
   const input = e as unknown as ProgressInput
   // A bar of Claude's own list gives way to the skill's.
   const own = (p: Flow | null) => (p && (p.source ?? 'tool') !== 'tool' ? null : p)
-  const prev = own(await read($, flow))
+  let prev = own(await read($, flow))
+  const starts = input.title !== undefined || input.total !== undefined || !!input.groups?.length || !!input.tasks?.length
+  if (!prev && !starts) {
+    // Only a step forward, with no bar on: carry on from the one kept, rather
+    // than draw an empty one.
+    const kept = await keptBar($)
+    if (kept && !kept.flow) return { result: 'ok: the person closed the bar' }
+    if (!kept?.flow || kept.flow.isFinished) return { result: NO_BAR }
+    prev = kept.flow
+    await update($, flow, p => (own(p) ? p : kept.flow))
+  }
   if (isNewFlow(prev, input) && input.title !== undefined) {
     // A new flow starts with a clean list; agents still running stay.
     await update($, agents, list => list.filter(a => a.status === 'running'))
   }
   const next = await setFlow($, p => ({ ...merge(own(p), input), source: 'tool' }))
+  if (next) await keepBar($, next)
   if (next && input.tasks?.length) await autoOpen($, next.title)
   return { result: `ok: ${label(next ?? blank())}` }
 }
@@ -2083,7 +2132,10 @@ const registerProgress: Register = on => {
         label="✕"
         plain
         role="dismiss"
-        onPress={() => update($, flow, () => null)}
+        onPress={async () => {
+          await update($, flow, () => null)
+          if ((f.source ?? 'tool') === 'tool') await keepBar($, null)
+        }}
       />
     )
 
