@@ -1148,6 +1148,9 @@ const stepsHeight = (f: Flow, W: number): number =>
 const stepsSvg = (W: number, f: Flow): string => {
   const n = stepColumns(W)
   const colW = W / n
+  // Each step carries its number in the whole flow (1 to the bar's total), in a
+  // column as wide as the longest number.
+  const numW = Math.ceil(String(stepsOf(f).length).length * 6.6) + 5
   const out: string[] = []
   let y = 0
   let index = 0
@@ -1157,18 +1160,21 @@ const stepsSvg = (W: number, f: Flow): string => {
     out.push(`<text x="0" y="${y + 15}" font-family="${FONT}" font-size="12" font-weight="600" fill="${color}">${xml(fitText(g.name, 12, W - 60))}</text>
 <text class="m" x="${W}" y="${y + 15}" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${f.isFinished ? g.steps.length : gDone}/${g.steps.length}</text>`)
     y += 22
+    // Down the first column, then the second: the list reads in order.
+    const rows = Math.ceil(g.steps.length / n)
     g.steps.forEach((name, i) => {
       const at = index + i
       const state = f.isFinished || at < f.done ? 'done' : at === f.done ? 'now' : 'next'
-      const x = (i % n) * colW
-      const ry = y + Math.floor(i / n) * STEP_ROW
+      const x = Math.floor(i / rows) * colW
+      const ry = y + (i % rows) * STEP_ROW
       const mark =
         state === 'done'
           ? `<path d="M${x + 1} ${ry + 9}l3 3 6-6.5" fill="none" stroke="#3B9C5F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`
           : state === 'now'
             ? `<circle class="live" cx="${x + 5}" cy="${ry + 9}" r="3.5" fill="${color}"/>`
             : `<circle cx="${x + 5}" cy="${ry + 9}" r="3.5" fill="none" stroke="#9a9a96" stroke-width="1.2"/>`
-      out.push(`${mark}<text class="${state === 'next' ? 'm' : 't'}" x="${x + 16}" y="${ry + 13}" font-family="${FONT}" font-size="12" font-weight="${state === 'now' ? 600 : 400}">${xml(fitText(name, 12, colW - 22))}</text>`)
+      out.push(`${mark}<text class="m" x="${x + 14 + numW}" y="${ry + 13}" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${at + 1}.</text>
+<text class="${state === 'next' ? 'm' : 't'}" x="${x + 18 + numW}" y="${ry + 13}" font-family="${FONT}" font-size="12" font-weight="${state === 'now' ? 600 : 400}">${xml(fitText(name, 12, colW - 24 - numW))}</text>`)
     })
     y += Math.ceil(g.steps.length / n) * STEP_ROW
     index += g.steps.length
@@ -1826,7 +1832,7 @@ const registerProgress: Register = on => {
           <Svg source={headerSvg(W, title, t)} alt={title ? `${title}: ${summary}` : summary} width={W} height={headerHeight(title)} />
           {hasUsage && <Svg key="usage" source={usageSvg(W, usage)} alt={usageAlt} width={W} height={22} />}
           {f && f.groups.length > 0 && (
-            <Svg source={stepsSvg(W, f)} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
+            <Svg source={stepsSvg(W, f)} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${i + 1}. ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
           )}
           {toggleCompact}
           {isEmpty && <Text dimColor>{s.empty}</Text>}

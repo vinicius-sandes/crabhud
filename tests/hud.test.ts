@@ -744,6 +744,32 @@ test('the progress bar takes the app style in the app and the terminal style in 
   await term.unmount()
 })
 
+test("the panel's step list reads down each column and numbers every step of the flow", async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  await $.tool.call(PROGRESS as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
+  const list = (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).includes('B0'))
+  const alt = String(list?.props.alt)
+  console.log(`panel steps: ${alt}`)
+  expect(alt).toContain('✓ 1. B0')
+  expect(alt).toContain('→ 6. B5')
+  expect(alt).toContain('○ 14. I5')
+  const src = String(list?.props.source)
+  expect(src).toContain('>14.</text>')
+  const at = (step: string) => {
+    const m = src.match(new RegExp(`x="([\\d.]+)" y="([\\d.]+)"[^>]*>${step}</text>`))
+    return { x: Number(m?.[1]), y: Number(m?.[2]) }
+  }
+  // Two columns in this width: B0-B3 down the first, B4-B7 down the second (the mod capitalises each step).
+  expect(at('B1').x).toBe(at('B0').x)
+  expect(at('B1').y > at('B0').y).toBe(true)
+  expect(at('B4').x > at('B3').x).toBe(true)
+  expect(at('B4').y).toBe(at('B0').y)
+  await ui.unmount()
+})
+
 test('every style draws the progress bar, unfinished and finished', async ($, on) => {
   world(on)
   panes(on)
