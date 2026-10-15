@@ -5,7 +5,7 @@
 
 import type { HudLimit, HudProps } from '../types'
 import { BAR_CSS, barSvg } from './bar-styles'
-import { EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pctText, tone } from './hud-words'
+import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pace, pctText, tone } from './hud-words'
 
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
 // Ultracode's palette, purple to pink, along the bars and its label.
@@ -87,6 +87,10 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
 <mask id="m${id}"><rect class="uw" width="${W * 2}" height="${H}" fill="url(#l${id})"/></mask></defs>
 <rect width="${W}" height="${H}" fill="url(#d${id})" mask="url(#m${id})" opacity=".55"/>`
   }
+  // How fast a window fills (+N%/h for 5h, +N%/day for 7d), and when it runs
+  // out at that pace, only when that comes before its reset.
+  const rateText = (l: Lim) => pace(l, now, words, true).rate
+  const runsOut = (l: Lim, tight: boolean) => pace(l, now, words, tight).out
   const left = (l: Lim, tight: boolean) => (l?.resetsAt != null ? fmtLeft(l.resetsAt - now, tight, words.now) : '')
   const svg = (H: number, body: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" data-hud="1" data-style="${p.style}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>${CSS}${BAR_CSS}</style>${wave(H)}${body}</svg>`
@@ -115,7 +119,7 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
         parts.push(effort(x, y))
         x += effortW + 4
       }
-      const mini = (label: string, v: number | null, base: string, reset: string) => {
+      const mini = (label: string, v: number | null, base: string, reset: string, l?: Lim) => {
         put(label, { cls: 'm' })
         if (barW > 0) {
           parts.push(barSvg({ style: p.style, x, y: 8, w: barW, h: 10, p: v ?? 0, ...colors(v, base), live: p.working, uid: uid() }))
@@ -123,13 +127,15 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
         }
         put(pctText(v), { cls: 't', bold: true })
         if (resets && reset) put(`↻ ${reset}`, { cls: 'm' })
+        if (resets && rateText(l)) x += reset ? 2 : 0
+        if (resets && rateText(l)) put(rateText(l), runsOut(l, true) ? { fill: AMBER, bold: true } : { cls: 'm' })
       }
       sep()
       mini('ctx', ctxP, PURPLE, '')
       sep()
-      mini('5h', five?.percent ?? null, GREEN, left(five, true))
+      mini('5h', five?.percent ?? null, GREEN, left(five, true), five)
       sep()
-      mini('7d', week?.percent ?? null, GREEN, left(week, true))
+      mini('7d', week?.percent ?? null, GREEN, left(week, true), week)
       sep()
       put(cost, { cls: 't', bold: true })
       return { parts, width: x - 7 }
@@ -149,8 +155,8 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
       p.working ? words.working : alert ? words.alert : words.ready,
       `${p.model} ${effortText}`,
       `ctx ${pctText(ctxP)}`,
-      `5h ${pctText(five?.percent ?? null)}${left(five, true) ? ` ↻ ${left(five, true)}` : ''}`,
-      `7d ${pctText(week?.percent ?? null)}${left(week, true) ? ` ↻ ${left(week, true)}` : ''}`,
+      `5h ${pctText(five?.percent ?? null)}${left(five, true) ? ` ↻ ${left(five, true)}` : ''}${rateText(five) ? ` ${rateText(five)}` : ''}${runsOut(five, true) ? ` (${runsOut(five, true)})` : ''}`,
+      `7d ${pctText(week?.percent ?? null)}${left(week, true) ? ` ↻ ${left(week, true)}` : ''}${rateText(week) ? ` ${rateText(week)}` : ''}${runsOut(week, true) ? ` (${runsOut(week, true)})` : ''}`,
       cost,
     ].join(' · ')
     return { svg: svg(H, best.parts.join('')), height: H, alt }
@@ -162,8 +168,6 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   const H = RH * (rows + 1) + 6
   const L = 22
   const BX = 116
-  const DW = Math.min(210, Math.max(120, W * 0.28))
-  const BW = Math.max(60, W - BX - DW - 14)
   const parts: string[] = []
   const stateWord = p.working ? { t: words.working, c: ORANGE } : alert ? { t: words.alert, c: RED } : { t: words.ready, c: GREEN }
   parts.push(status(0, 14), T(L, 18, stateWord.t, { bold: true, fill: stateWord.c }), T(BX, 18, p.model, { cls: 't', bold: true }))
@@ -171,23 +175,33 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   parts.push(T(ex, 18, words.effort, { cls: 'm' }), effort(ex + textWidth(words.effort, 12.5) + 7, 18))
   parts.push(`<text x="${W - 2}" y="18" text-anchor="end" font-family="${FONT}" font-size="12.5"><tspan class="m">${xml(words.chat)} </tspan><tspan class="t" font-weight="600">${xml(cost)}</tspan></text>`)
   const lines: string[] = [`${stateWord.t} · ${p.model} · ${words.effort} ${effortText} · ${words.chat} ${cost}`]
-  const row = (i: number, label: string, v: number | null, base: string, detail: string) => {
+  const row = (i: number, label: string, v: number | null, base: string, detail: string, warn = '') => {
     const y = RH * i + 6
     const c = tone(v ?? 0, base)
     parts.push(
       `<circle cx="6" cy="${y + 11}" r="4" fill="${ultra && (v ?? 0) < 90 ? ultraAt(i / (rows + 1)) : c}"/>`,
       T(L, y + 15, label, { cls: 'm' }),
       barSvg({ style: p.style, x: BX, y: y + 3, w: BW, h: 16, p: v ?? 0, ...colors(v, base), live: p.working, uid: uid(), label: pctText(v) }),
-      T(BX + BW + 14, y + 15, detail, { cls: 'm' }),
+      warn
+        ? `<text x="${BX + BW + 14}" y="${y + 15}" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums"><tspan class="m">${xml(detail)} · </tspan><tspan fill="${AMBER}" font-weight="600">${xml(warn)}</tspan></text>`
+        : T(BX + BW + 14, y + 15, detail, { cls: 'm' }),
     )
-    lines.push(`${label} ${pctText(v)}${detail ? ` · ${detail}` : ''}`)
+    lines.push(`${label} ${pctText(v)}${detail ? ` · ${detail}` : ''}${warn ? ` · ${warn}` : ''}`)
   }
   const u = p.chat
-  row(1, words.context, ctxP, PURPLE, u?.ctxTokens != null ? `${fmtTok(u.ctxTokens)} / ${fmtTok(u.ctxWindow)}` : u ? `— / ${fmtTok(u.ctxWindow)}` : '')
   const limitDetail = (l: Lim) =>
-    l?.isReset ? `${words.reset} · ${words.account}` : l?.resetsAt != null ? `${words.resetsIn(left(l, false))} · ${words.account}` : l ? words.account : words.noReading
-  row(2, words.fiveHour, five?.percent ?? null, GREEN, limitDetail(five))
-  row(3, words.sevenDay, week?.percent ?? null, GREEN, limitDetail(week))
+    l?.isReset ? `${words.reset} · ${words.account}` : l?.resetsAt != null ? `${words.resetsIn(left(l, false))} · ${rateText(l) || words.account}` : l ? rateText(l) || words.account : words.noReading
+  const ctxDetail = u?.ctxTokens != null ? `${fmtTok(u.ctxTokens)} / ${fmtTok(u.ctxWindow)}` : u ? `— / ${fmtTok(u.ctxWindow)}` : ''
+  // The details column takes what its longest line needs (the amber run-out included), within reason.
+  const need = Math.max(
+    textWidth(ctxDetail, 12.5),
+    ...[five, week, ...others].map(l => textWidth(limitDetail(l), 12.5) + (runsOut(l, false) ? textWidth(` · ${runsOut(l, false)}`, 12.5, true) : 0)),
+  )
+  const DW = Math.round(Math.min(W * 0.46, Math.max(120, Math.min(210, W * 0.28), need + 8)))
+  const BW = Math.max(60, W - BX - DW - 14)
+  row(1, words.context, ctxP, PURPLE, ctxDetail)
+  row(2, words.fiveHour, five?.percent ?? null, GREEN, limitDetail(five), runsOut(five, false))
+  row(3, words.sevenDay, week?.percent ?? null, GREEN, limitDetail(week), runsOut(week, false))
   others.forEach((l, i) => row(4 + i, l.kind === 'spend_limit' ? words.spend : l.kind, l.percent, GREEN, limitDetail(l)))
   return { svg: svg(H, parts.join('')), height: H, alt: lines.join('; ') }
 }

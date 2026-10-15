@@ -776,3 +776,126 @@ test("the panel's bars follow the styles too: the app's in the app, the terminal
   expect(text).not.toContain('░')
   await term.unmount()
 })
+
+// ---- Phase 3: the walking crab, waiting on the person, sounds, the limits' pace, the gliding tag ----
+
+const WORKING_BAND = { ...BAND, props: { ...BAND.props, isWorking: true } } as const
+const svgWith = async (ui: any, mark: string) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.source).includes(mark))
+
+test('at work the crab walks the free part of the row; asleep it keeps still', async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  const busy = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
+  const walk = await svgWith(busy, 'data-walk=')
+  expect(String(walk?.props.source)).toContain('data-walk="think"')
+  // The smoke behind it, and its clothes on the way.
+  expect(String(walk?.props.source)).toContain('class="sm0')
+  expect(String(walk?.props.source)).toContain('c-m-think walk')
+  await busy.unmount()
+  const idle = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(await svgWith(idle, 'data-walk=')).toBeUndefined()
+  await idle.unmount()
+})
+
+test("Claude's question turns the row amber until it is answered", async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  on('tool.call', (async () => {
+    await clock.sleep(5000)
+    return { result: 'answered' }
+  }) as any)
+  await start($, on)
+  const asked = $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q1', questions: [{ question: 'Which style?' }] } as any)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
+  const wait = await svgWith(ui, 'data-wait=')
+  expect(String(wait?.props.alt)).toMatch(/waiting for your answer|esperando sua resposta/)
+  expect(String(wait?.props.alt)).toContain('Which style?')
+  await ui.unmount()
+  await clock.advance(5000)
+  await asked
+  const after = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
+  expect(await svgWith(after, 'data-wait=')).toBeUndefined()
+  await after.unmount()
+})
+
+test('a permission prompt that stands turns the row amber; in the terminal too', async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  on('tool.check', () => ({ decision: 'ask' }) as any)
+  on('tool.call', (async () => {
+    await clock.sleep(5000)
+    return { result: 'ran' }
+  }) as any)
+  await start($, on)
+  const ran = $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' } as any)
+  await clock.settle()
+  // The engine decides on the call while it is in flight: the mode will ask.
+  await $.tool.check({ tool: 'Bash', input: { command: 'npm test' }, tool_use_id: 'b1' } as any)
+  await clock.advance(700)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...WORKING_BAND } as any)
+  const text = await allText(ui)
+  await ui.unmount()
+  await clock.advance(5000)
+  await ran
+  expect(text).toMatch(/waiting for your permission|esperando sua permissão/)
+  expect(text).toContain('Bash: npm test')
+})
+
+test('sounds are off by default; /crabhud sound on plays the chime when Claude waits', async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  const played: string[] = []
+  on('audio.play', ((_$: unknown, e: any) => {
+    played.push(String(e.clip.asset))
+    return { value: undefined }
+  }) as any)
+  on('tool.call', (async () => {
+    await clock.sleep(1000)
+    return { result: 'ok' }
+  }) as any)
+  await start($, on)
+  const ask = (id: string) => $.tool.call({ tool: 'AskUserQuestion', tool_use_id: id, questions: [{ question: 'Ok?' }] } as any)
+  let p = ask('q1')
+  await clock.advance(1000)
+  await p
+  expect(played).toEqual([])
+  const r = await $.command.run({ command: 'crabhud', args: 'sound on' } as any)
+  expect(String((r as any).text)).toContain('Sounds on')
+  p = ask('q2')
+  await clock.advance(1000)
+  await p
+  expect(played).toEqual(['sounds/wait.wav'])
+})
+
+test("the HUD shows how fast a limit fills, amber when it runs out before its reset", async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  await start($, on)
+  await $.session.measure(measure)
+  await clock.advance(20 * 60000)
+  // 20 minutes later the 5-hour window went from 20% to 40%: +60%/h, out in 1h, before its reset.
+  await $.session.measure(reading(40, 58))
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  const alt = await shown(ui)
+  expect(alt).toContain('+60%/h')
+  expect(alt).toContain('runs out in 1h')
+  await ui.unmount()
+})
+
+test('a step forward makes the progress tag glide from where it was', async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  await start($, on)
+  await $.tool.call(PROGRESS as any)
+  await clock.advance(5000)
+  await $.tool.call({ ...PROGRESS, done: 6 } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(String((await progressRow(ui))?.props.source)).toContain('@keyframes bgp')
+  await ui.unmount()
+  await clock.advance(1000)
+  const later = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(String((await progressRow(later))?.props.source)).not.toContain('@keyframes bgp')
+  await later.unmount()
+})

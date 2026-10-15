@@ -2,7 +2,7 @@ import type { ClientModule, RenderElement } from 'claude-code'
 
 import type { HudLimit, HudProps } from '../types'
 import { barCells, mergeCells } from './bar-styles'
-import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pctText, tone, CYCLE_S, cycleAt } from './hud-words'
+import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pace, pctText, tone, CYCLE_S, cycleAt } from './hud-words'
 
 type State = { open: boolean; frame: number; refresh: number }
 type Seg = { t: string; c?: string; dim?: boolean; bold?: boolean }
@@ -271,6 +271,9 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       ...(n > 0 ? [{ bar: { p: l?.percent ?? null, n, base: GREEN } }] : []),
       { seg: { t: pctText(l?.percent ?? null), bold: true } },
       ...(withReset && l?.resetsAt != null ? [{ seg: { t: `↻ ${fmtLeft(l.resetsAt - now, true, W.now)}`, dim: true } }] : []),
+      ...(withReset && pace(l, now, W, true).rate
+        ? [{ seg: pace(l, now, W, true).out ? { t: pace(l, now, W, true).rate, c: AMBER, bold: true } : { t: pace(l, now, W, true).rate, dim: true } }]
+        : []),
     ]
     // The status glyph sits in a box of fixed width: in the desktop's
     // proportional font each spinner frame (and the ✓) is a different width,
@@ -347,13 +350,16 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
   // Expanded: fixed-width columns (icon, label, bar, percent, detail), so
   // every bar starts and ends on the same column.
   const n = Math.max(10, Math.min(desktop ? 28 : 40, cols - 2 - 12 - 2 - 6 - 2 - 18))
-  const row = (icon: Seg, label: string, b: RenderElement, pct: number | null, detail: string) => (
+  const row = (icon: Seg, label: string, b: RenderElement, pct: number | null, detail: string, warn = '') => (
     <Box flexDirection="row" alignItems="center">
       <Box width={2} flexShrink={0}>{text(icon)}</Box>
       <Box width={12} flexShrink={0}>{text({ t: label, dim: true })}</Box>
       {b}
       <Box width={6} flexShrink={0} justifyContent="flex-end">{text({ t: pctText(pct), bold: true })}</Box>
-      <Box marginLeft={2} flexShrink={1} overflow="hidden">{text({ t: detail, dim: true })}</Box>
+      <Box marginLeft={2} flexShrink={1} overflow="hidden">
+        {text({ t: detail, dim: true })}
+        {warn ? text({ t: ` · ${warn}`, c: AMBER, bold: true }) : null}
+      </Box>
     </Box>
   )
   const limitRow = (icon: string, label: string, l: (HudLimit & { isReset?: boolean }) | undefined) =>
@@ -362,7 +368,14 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       label,
       bar(l?.percent ?? null, n, GREEN),
       l?.percent ?? null,
-      l?.isReset ? `${W.reset} · ${W.account}` : l?.resetsAt != null ? `${W.resetsIn(fmtLeft(l.resetsAt - now, false, W.now))} · ${W.account}` : l ? W.account : W.noReading,
+      l?.isReset
+        ? `${W.reset} · ${W.account}`
+        : l?.resetsAt != null
+          ? `${W.resetsIn(fmtLeft(l.resetsAt - now, false, W.now))} · ${pace(l, now, W, false).rate || W.account}`
+          : l
+            ? pace(l, now, W, false).rate || W.account
+            : W.noReading,
+      pace(l, now, W, false).out,
     )
   const stateWord: Seg = props.working
     ? { t: W.working, c: ORANGE }

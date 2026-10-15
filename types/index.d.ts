@@ -6,6 +6,8 @@ export type HudLimit = {
   percent: number
   /** Epoch milliseconds, or null when the engine gave no reset time. */
   resetsAt: number | null
+  /** How fast the window fills, in points per hour, from the readings so far; absent until there are two. */
+  rate?: number | null
 }
 
 /** What belongs to this chat alone: its context window and its cost. */
@@ -84,6 +86,8 @@ export type Flow = {
   /** The step in progress, when the caller names it; else read from `groups`. */
   step: string
   groups: StepGroup[]
+  /** The last step forward: the percent before it and when it came, so the tag glides from there. */
+  moved?: { from: number; at: number }
 }
 
 export type AgentStatus = 'running' | 'done' | 'failed'
@@ -117,6 +121,16 @@ export type Activity = {
   target: string
 }
 
+/** Claude waiting on the person: a permission prompt or its own question. */
+export type Waiting = {
+  kind: 'permission' | 'answer'
+  /** The tool asking, and what it acts on (a command, a file, the question). */
+  tool: string
+  detail: string
+  /** The call it waits on; cleared when that call ends. */
+  id: string
+}
+
 export type Panel = {
   isCompact: boolean
   isDoneCollapsed: boolean
@@ -145,6 +159,9 @@ declare module 'claude-code' {
       panel: Panel
       now: number
       activity: Activity | null
+      waiting: Waiting | null
+      /** Sounds on (`/crabhud sound on`); off by default. */
+      sound: boolean
     }
   }
 }

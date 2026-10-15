@@ -93,7 +93,13 @@ export type BarSvgInput = {
   steps?: number
   /** Where one group ends and the next begins (0-1): a gap in the track. */
   gaps?: number[]
+  /** The percent before the last step and how long ago it moved (ms): the tag
+   *  glides from there, picking up where it was if the drawing is redrawn. */
+  from?: { p: number; age: number }
 }
+
+/** How long the tag takes to glide to its new place. */
+export const GLIDE_MS = 450
 
 /** One bar, as an SVG group at (x, y); its classes come from BAR_CSS. */
 export function barSvg(b: BarSvgInput): string {
@@ -224,7 +230,12 @@ export function barSvg(b: BarSvgInput): string {
     const size = h >= 14 ? 11 : 10
     const tw = Math.min(w, Math.round(16 + textWidth(b.label, size) * 1.08))
     const tx = Math.max(0, Math.min(w - tw, fillW - tw))
+    const fromTx = b.from ? Math.max(0, Math.min(w - tw, Math.round((w * Math.max(0, Math.min(100, b.from.p))) / 100) - tw)) : tx
+    const glide = b.from && b.from.age >= 0 && b.from.age < GLIDE_MS && Math.abs(fromTx - tx) > 0.5
     tag = `<rect x="${tx}" width="${tw}" height="${h}" rx="${h / 2}" fill="${head}"/><text x="${tx + tw / 2}" y="${r1(h / 2 + size * 0.36)}" text-anchor="middle" font-family="${FONT}" font-size="${size}" font-weight="600" fill="#fff" font-variant-numeric="tabular-nums">${b.label.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`
+    // The tag glides from where it was; a negative delay by the step's age keeps a redraw mid-glide from starting it over.
+    if (glide && b.from)
+      tag = `<style>@keyframes bg${uid}{from{transform:translateX(${fromTx - tx}px)}}.bg${uid}{animation:bg${uid} ${GLIDE_MS}ms cubic-bezier(.22,1,.36,1) both;animation-delay:-${Math.round(b.from.age)}ms}@media (prefers-reduced-motion: reduce){.bg${uid}{animation:none}}</style><g class="bg${uid}">${tag}</g>`
   }
   // Pixel and solid sit in the rounded track; the others draw their own empties.
   const tracked = style === 'pixel' || style === 'solid'

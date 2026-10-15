@@ -35,6 +35,9 @@ export const WORDS = {
     noReading: 'no reading yet',
     account: 'account',
     now: 'now',
+    perHour: '/h',
+    perDay: '/day',
+    runsOut: (t: string) => `runs out in ${t}`,
   },
   'pt-BR': {
     effortNames: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string>,
@@ -52,6 +55,9 @@ export const WORDS = {
     noReading: 'sem leitura ainda',
     account: 'conta',
     now: 'agora',
+    perHour: '/h',
+    perDay: '/dia',
+    runsOut: (t: string) => `acaba em ${t}`,
   },
 }
 export function fmtLeft(ms: number, tight: boolean, now: string): string {
@@ -70,6 +76,20 @@ export function fmtTok(n: number): string {
   if (n >= 1e6) return `${+(n / 1e6).toFixed(1)}M`
   if (n >= 1e3) return `${Math.round(n / 1e3)}k`
   return String(n)
+}
+
+type Words = (typeof WORDS)[keyof typeof WORDS]
+type Paced = { kind: string; percent: number; resetsAt: number | null; rate?: number | null; isReset?: boolean }
+
+/** How fast a window fills (+N%/h for 5h, +N%/day for 7d) and, only when that
+ *  comes before its reset, when it runs out at that pace. */
+export function pace(l: Paced | undefined, now: number, w: Words, tight: boolean): { rate: string; out: string } {
+  if (l?.rate == null || l.rate < 0.05 || l.isReset) return { rate: '', out: '' }
+  const day = l.kind === 'seven_day'
+  const v = day ? l.rate * 24 : l.rate
+  const rate = `+${v < 10 ? Math.round(v * 10) / 10 : Math.round(v)}%${day ? w.perDay : w.perHour}`
+  const ms = ((100 - l.percent) / l.rate) * 3600000
+  return { rate, out: l.resetsAt != null && now + ms < l.resetsAt ? w.runsOut(fmtLeft(ms, tight, w.now)) : '' }
 }
 
 export const pctText = (p: number | null) => (p === null ? '—' : `${Math.round(p)}%`)

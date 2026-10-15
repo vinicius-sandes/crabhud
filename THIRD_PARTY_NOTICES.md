@@ -43,6 +43,11 @@ line, solid, dots, spark; classic is pixel-hud's own blocks), drawn in SVG for t
 terminal, and the `/crabhud style` picker with live previews, follow its `/deck style`, adapted to the progress bar,
 the HUD's percentage gauges and the agents panel.
 
+Also from claude-deck (2.4.0): the crab walking the free part of the row, the limits' pace and run-out estimate,
+the amber row and chime while Claude waits on a permission or a question (its `tool.check` ask after a short delay),
+the optional sounds, the progress tag gliding to its new place, and its trick for animating across redraws: a
+negative `animation-delay` by the age of the scene. The code and the sounds (`sounds/`) are crabhud's own.
+
 ```
 MIT License
 
