@@ -80,10 +80,27 @@ function world(
   return { otherChatWrites, clock }
 }
 
+// What the HUD says: in the app, the drawing's alt; in the terminal, its Texts.
 async function shown(ui: any): Promise<string> {
+  const svg = await hudSvg(ui)
+  if (svg) return String(svg.props.alt)
   const texts = await ui.findAll({ type: 'Text', in: 'hud' })
   return texts.map((t: { text: string }) => t.text).join('')
 }
+
+// The app's HUD: one Svg the hook draws, and its ▾/▴ Button.
+async function hudSvg(ui: any): Promise<any> {
+  return (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.source).includes('data-style='))
+}
+// Sizes the terminal's Client; the app's drawing takes the band's width.
+async function fit(ui: any, size: { columns: number; rows: number; in: string }): Promise<void> {
+  if ((await ui.findAll({ type: 'Client' })).length) await ui.resize(size)
+}
+async function toggleHud(ui: any): Promise<void> {
+  await ui.press({ key: 'hud-toggle' })
+  await ui.redraw()
+}
+const styleOf = async (ui: any) => String((await hudSvg(ui))?.props.source).match(/data-style="(\w+)"/)?.[1]
 
 // session.start with an engine beneath it: what a chat sees when it opens.
 async function start($: any, on: any, usage: (e: any) => unknown = () => ({ startedAt: 0, ...measure })) {
@@ -96,25 +113,24 @@ async function start($: any, on: any, usage: (e: any) => unknown = () => ({ star
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
 }
 
-test('desktop bars fill in proportion to the percentage', async ($, on) => {
+test('desktop: the HUD is one drawing, its bars at the readings', async ($, on) => {
   world(on)
   panes(on)
   await start($, on)
-  // Classic's blocks: one glyph per cell, filled or not.
-  await $.command.run({ command: 'hud', args: 'style classic' } as any)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await ui.resize({ columns: 100, rows: 4, in: 'hud' })
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
-  const texts = await ui.findAll({ type: 'Text', in: 'hud' })
-  const runs: string[] = texts.map((t: any) => t.text).filter((t: string) => /^[█▓▒·]$/.test(t))
-  const n = runs.length / 3
-  const bars = [runs.slice(0, n), runs.slice(n, 2 * n), runs.slice(2 * n)]
-  const filled = bars.map(b => b.filter(c => c !== '·').length / n)
-  console.log(`cells per bar ${n}, filled ${filled.map(f => Math.round(f * 100)).join('/')}`)
-  expect(Math.abs(filled[0] - 0.31) < 0.06).toBe(true)
-  expect(Math.abs(filled[1] - 0.2) < 0.06).toBe(true)
-  expect(Math.abs(filled[2] - 0.58) < 0.08).toBe(true)
+  expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
+  const closed = await hudSvg(ui)
+  console.log(`desktop closed: ${closed.props.alt}`)
+  for (const s of ['ctx 31%', '5h 20%', '7d 58%', '$4.32']) expect(closed.props.alt).toContain(s)
+  expect(closed.props.width <= 100 * 8).toBe(true)
+  expect((await ui.find({ key: 'hud-toggle' }))?.props.label).toBe('▾')
+  await toggleHud(ui)
+  const open = await hudSvg(ui)
+  // Open: each bar carries its percent on a tag, and the drawing is taller.
+  for (const p of ['31%', '20%', '58%']) expect(String(open.props.source)).toContain(`>${p}</text>`)
+  expect(open.props.height > closed.props.height).toBe(true)
+  expect((await ui.find({ key: 'hud-toggle' }))?.props.label).toBe('▴')
   await ui.unmount()
 })
 
@@ -124,7 +140,6 @@ test("another chat's newer limits reading wins; this chat's context stays its ow
   // A response in this chat: its reading goes out to the other chats.
   await $.session.measure(reading(92, 58))
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
   expect(await shown(ui)).toContain('92%')
   // Then another chat, later, sees the 5-hour window at 97%.
   otherChatWrites(SHARED, JSON.stringify({
@@ -135,6 +150,7 @@ test("another chat's newer limits reading wins; this chat's context stays its ow
     at: now + 60000,
   }))
   await clock.advance(600)
+  await ui.redraw()
   const line = await shown(ui)
   console.log(`after another chat: ${line}`)
   expect(line).toContain('97%')
@@ -156,8 +172,7 @@ test('the first run asks for the language, once, in English', async ($, on) => {
     if (surface === 'desktop') {
       await ui.press({ key: 'lang-pt-BR' })
       await ui.redraw()
-      await ui.resize({ columns: 100, rows: 4, in: 'hud' })
-      await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+      await toggleHud(ui)
       const open = await shown(ui)
       console.log(`after picking: ${open}`)
       expect(open).toContain('contexto')
@@ -176,8 +191,7 @@ test('labels follow the picked language', async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await ui.resize({ columns: 100, rows: 4, in: 'hud' })
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+  await toggleHud(ui)
   const open = await shown(ui)
   console.log(`pt-BR expanded: ${open}`)
   expect(open).toContain('contexto')
@@ -198,9 +212,18 @@ test('ultracode shimmers behind the band and stays readable', async ($, on) => {
   panes(on)
   await start($, on)
   await $.session.measure(measure)
-  for (const surface of ['terminal', 'desktop'] as const) {
+  // The app: the wave and the label's gradient are in the drawing, moved by CSS.
+  const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  const drawing = await hudSvg(app)
+  console.log(`desktop ultracode: ${drawing.props.alt}`)
+  expect(drawing.props.alt).toContain('Ultracode')
+  expect(drawing.props.alt).toContain('$4.32')
+  expect(String(drawing.props.source)).toContain('class="uw"')
+  expect(String(drawing.props.source)).toContain('#F25F8B')
+  await app.unmount()
+  for (const surface of ['terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
-    await ui.resize({ columns: 100, rows: 1, in: 'hud' })
+    await fit(ui, { columns: 100, rows: 1, in: 'hud' })
     const a = await shown(ui)
     await ui.advance(1000)
     const b = await shown(ui)
@@ -226,16 +249,25 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
   world(on)
   await start($, on)
   await $.session.measure(measure)
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
-    for (const columns of [140, 100, 80, 60, 45]) {
-      await ui.resize({ columns, rows: 1, in: 'hud' })
-      const line = await shown(ui)
-      console.log(`${surface} ${columns}: ${line} (${line.length})`)
-      expect(line).toContain('$4.32')
-      expect(line.length <= columns).toBe(true)
-    }
-    await ui.unmount()
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  for (const columns of [140, 100, 80, 60, 45]) {
+    await fit(ui, { columns, rows: 1, in: 'hud' })
+    const line = await shown(ui)
+    console.log(`terminal ${columns}: ${line} (${line.length})`)
+    expect(line).toContain('$4.32')
+    expect(line.length <= columns).toBe(true)
+  }
+  await ui.unmount()
+  // The app: the drawing fits the band, and the cost ends inside it.
+  for (const bodyColumns of [160, 100, 70, 45]) {
+    const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND, props: { ...BAND.props, bodyColumns } } as any)
+    const d = await hudSvg(app)
+    const src = String(d.props.source)
+    const costX = Number(src.match(/x="([\d.]+)"[^>]*>\$4\.32<\/text>/)?.[1])
+    console.log(`desktop ${bodyColumns}: width ${d.props.width}, cost at ${costX}`)
+    expect(d.props.width <= bodyColumns * 8).toBe(true)
+    expect(costX + 40 <= d.props.width).toBe(true)
+    await app.unmount()
   }
 })
 
@@ -243,49 +275,64 @@ test('compact: the spinner turns in a box of fixed width, so the row never moves
   world(on)
   await start($, on)
   await $.session.measure(measure)
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const status = async (ui: any) => {
-      const box = await ui.find({ type: 'Box', key: 'status', in: 'hud' })
-      return { width: box?.props.width, glyph: box?.text }
-    }
-    // Idle: the ✓, in the same box the spinner will turn in.
-    const idle = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
-    await idle.resize({ columns: 100, rows: 1, in: 'hud' })
-    const ready = await status(idle)
-    await idle.unmount()
-    expect(ready.glyph).toBe('✓')
-
-    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND, props: { ...BAND.props, isWorking: true } } as any)
-    await ui.resize({ columns: 100, rows: 1, in: 'hud' })
-    const frames = []
-    for (let i = 0; i < 6; i++) {
-      frames.push(await status(ui))
-      await ui.advance(200)
-    }
-    console.log(`${surface} spinner: ${frames.map(f => `${f.glyph}@${f.width}`).join(' ')}`)
-    expect(new Set(frames.map(f => f.glyph)).size > 1).toBe(true)
-    expect(frames.every(f => typeof f.width === 'number' && f.width === ready.width)).toBe(true)
-    await ui.unmount()
+  const status = async (ui: any) => {
+    const box = await ui.find({ type: 'Box', key: 'status', in: 'hud' })
+    return { width: box?.props.width, glyph: box?.text }
   }
+  // Idle: the ✓, in the same box the spinner will turn in.
+  const idle = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  await fit(idle, { columns: 100, rows: 1, in: 'hud' })
+  const ready = await status(idle)
+  await idle.unmount()
+  expect(ready.glyph).toBe('✓')
+
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+  await fit(ui, { columns: 100, rows: 1, in: 'hud' })
+  const frames = []
+  for (let i = 0; i < 6; i++) {
+    frames.push(await status(ui))
+    await ui.advance(200)
+  }
+  console.log(`terminal spinner: ${frames.map(f => `${f.glyph}@${f.width}`).join(' ')}`)
+  expect(new Set(frames.map(f => f.glyph)).size > 1).toBe(true)
+  expect(frames.every(f => typeof f.width === 'number' && f.width === ready.width)).toBe(true)
+  await ui.unmount()
+  // The app: the ✻ turns in CSS, in place; idle, a check.
+  const appIdle = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(String((await hudSvg(appIdle)).props.source)).not.toContain('class="spin"')
+  await appIdle.unmount()
+  const appBusy = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
+  expect(String((await hudSvg(appBusy)).props.source)).toContain('class="spin"')
+  await appBusy.unmount()
 })
 
 test('a click anywhere expands, another collapses', async ($, on) => {
   world(on)
   await start($, on)
   await $.session.measure(measure)
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
-    await ui.resize({ columns: 100, rows: 4, in: 'hud' })
-    await ui.pointer({ type: 'down', x: 40, y: 0, button: 'left', in: 'hud' })
-    const open = await shown(ui)
-    console.log(`${surface} expanded: ${open}`)
-    expect(open).toContain('context')
-    expect(open).toContain('resets in')
-    expect(open).toContain('account')
-    await ui.pointer({ type: 'down', x: 5, y: 2, button: 'left', in: 'hud' })
-    expect(await shown(ui)).not.toContain('context')
-    await ui.unmount()
-  }
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  await fit(ui, { columns: 100, rows: 4, in: 'hud' })
+  await ui.pointer({ type: 'down', x: 40, y: 0, button: 'left', in: 'hud' })
+  const open = await shown(ui)
+  console.log(`terminal expanded: ${open}`)
+  expect(open).toContain('context')
+  expect(open).toContain('resets in')
+  expect(open).toContain('account')
+  await ui.pointer({ type: 'down', x: 5, y: 2, button: 'left', in: 'hud' })
+  expect(await shown(ui)).not.toContain('context')
+  await ui.unmount()
+  // The app: the ▾ beside the drawing opens it, the ▴ closes it, and the pick stays.
+  const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  await toggleHud(app)
+  const appOpen = await shown(app)
+  console.log(`desktop expanded: ${appOpen}`)
+  for (const s of ['context', 'resets in', 'account']) expect(appOpen).toContain(s)
+  await app.unmount()
+  const again = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(await shown(again)).toContain('context')
+  await toggleHud(again)
+  expect(await shown(again)).not.toContain('context')
+  await again.unmount()
 })
 
 test('terminal: effort from settings and /effort; xhigh purple, max every colour', async ($, on) => {
@@ -298,7 +345,7 @@ test('terminal: effort from settings and /effort; xhigh purple, max every colour
   await start($, on)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
-  await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+  await fit(ui, { columns: 140, rows: 1, in: 'hud' })
   const barColors = async () =>
     (await ui.findAll({ type: 'Text', in: 'hud' }))
       .filter((t: any) => t.text.includes('█') && t.props.color)
@@ -348,7 +395,7 @@ test('linux: the record under XDG_CONFIG_HOME, the shared limits under ~/.claude
   await start($, on)
   await $.session.measure(reading(25, 58))
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+  await fit(ui, { columns: 120, rows: 1, in: 'hud' })
   const line = await shown(ui)
   console.log(`linux: ${line}`)
   expect(line).toContain('Sonnet 5.5')
@@ -379,7 +426,7 @@ for (const lang of ['en', 'pt-BR'] as const) {
     await ui.unmount()
     // The computer running the chat keeps its own HUD, with no remote mark.
     const home = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-    expect(await home.findAll({ type: 'Client' })).toHaveLength(1)
+    expect(await hudSvg(home)).toBeDefined()
     expect((await home.findAll({ type: 'Svg' })).filter((s: any) => String(s.props.alt).startsWith('Remote Control'))).toHaveLength(0)
     await home.unmount()
   })
@@ -416,7 +463,6 @@ test("another mod's row in the band stays beside the HUD", async ($, on) => {
   await $.session.measure(measure)
   beneath = ui => ui.Text({ key: 'other-mod', children: ['savvy: 2/5'] })
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
   expect((await ui.find({ type: 'Text', text: /savvy/ }))?.text).toBe('savvy: 2/5')
   expect(await shown(ui)).toContain('31%')
   await ui.unmount()
@@ -433,8 +479,7 @@ test('the context gauge measures against the autocompact window, and follows it'
   }))
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await ui.resize({ columns: 100, rows: 4, in: 'hud' })
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hud' })
+  await toggleHud(ui)
   const at400 = await shown(ui)
   console.log(`autocompact at 400k: ${at400}`)
   expect(at400).toContain('312k / 400k')
@@ -442,6 +487,7 @@ test('the context gauge measures against the autocompact window, and follows it'
   // The setting changes: within ten seconds the gauge follows.
   compact = 200000
   await clock.advance(10_000)
+  await ui.redraw()
   const at200 = await shown(ui)
   console.log(`autocompact at 200k: ${at200}`)
   expect(at200).toContain('312k / 200k')
@@ -465,7 +511,7 @@ test('terminal, fresh install: no saved effort, no desktop record → not Ultrac
   await start($, on)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
-  await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+  await fit(ui, { columns: 140, rows: 1, in: 'hud' })
   const fresh = await shown(ui)
   console.log(`terminal fresh: ${fresh}`)
   expect(fresh).toContain('Opus 5.5')
@@ -504,7 +550,7 @@ test('terminal: Ultracode set in settings (--settings) shows from the start', as
   on('session.messages', () => ({ value: [] }) as any)
   await start($, on)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
-  await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+  await fit(ui, { columns: 140, rows: 1, in: 'hud' })
   expect(await shown(ui)).toContain('Ultracode')
   await ui.unmount()
 })
@@ -529,7 +575,12 @@ function panes(on: any, opened: any[] = []) {
   return opened
 }
 
+// The bars' glyphs: in the terminal, those it drew; in the app, whose drawing
+// names its style, a sample of that style's.
+const SAMPLE_GLYPHS: Record<string, string> = { pixel: '⣿⣀', segments: '▰▱', line: '━─', solid: ' ', dots: '●○', spark: '▇▁', classic: '█·' }
 async function barGlyphs(ui: any): Promise<string> {
+  const style = await styleOf(ui)
+  if (style) return SAMPLE_GLYPHS[style] ?? ''
   return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇⣀-⣿ ]/g, '')
 }
 
@@ -542,7 +593,7 @@ test('/hud style <name> sets the bars on every surface and keeps the pick', asyn
   expect(said.text).toBe('HUD style: Segments.')
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
-    await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+    await fit(ui, { columns: 120, rows: 1, in: 'hud' })
     const g = await barGlyphs(ui)
     console.log(`${surface} segments: ${g}`)
     expect(g).toContain('▰')
@@ -553,7 +604,7 @@ test('/hud style <name> sets the bars on every surface and keeps the pick', asyn
   const bad = await $.command.run({ command: 'hud', args: 'style plaid' } as any)
   expect(bad.text).toContain('No style "plaid"')
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
-  await ui.resize({ columns: 120, rows: 1, in: 'hud' })
+  await fit(ui, { columns: 120, rows: 1, in: 'hud' })
   expect(await barGlyphs(ui)).toContain('▰')
   await ui.unmount()
 })
@@ -564,11 +615,11 @@ test('a saved style comes back with the next session', async ($, on) => {
   await start($, on)
   await $.session.measure(measure)
   const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
-  await term.resize({ columns: 120, rows: 1, in: 'hud' })
+  await fit(term, { columns: 120, rows: 1, in: 'hud' })
   expect(await barGlyphs(term)).toContain('━')
   await term.unmount()
   const desk = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
-  await desk.resize({ columns: 120, rows: 1, in: 'hud' })
+  await fit(desk, { columns: 120, rows: 1, in: 'hud' })
   expect(await barGlyphs(desk)).toContain('●')
   await desk.unmount()
 })
@@ -596,7 +647,7 @@ test('/hud style opens the picker: seven live previews, a key each, the pick per
     // desktop) until its own pick.
     for (const where of ['terminal', 'desktop'] as const) {
       const band = await $.ui.mount({ plugin: 'crabhud', surface: where, ...BAND } as any)
-      await band.resize({ columns: 120, rows: 1, in: 'hud' })
+      await fit(band, { columns: 120, rows: 1, in: 'hud' })
       const g = await barGlyphs(band)
       const picked = where === 'terminal' || surface === 'desktop'
       expect(g.includes('●')).toBe(picked)
@@ -616,7 +667,7 @@ test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => 
       for (const pct of [0, 64, 100]) {
         await $.session.measure(reading(pct, pct))
         const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
-        await ui.resize({ columns: 140, rows: 1, in: 'hud' })
+        await fit(ui, { columns: 140, rows: 1, in: 'hud' })
         const line = await shown(ui)
         expect(line).toContain('$4.32')
         expect(line).toContain(`${pct}%`)

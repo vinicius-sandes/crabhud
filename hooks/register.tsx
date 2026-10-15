@@ -4,6 +4,7 @@ import type { EngineInterface, Register, RenderElement, RenderInput, SessionRate
 import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup } from '../types'
 import { BAR_CSS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
 import type { Cell } from './bar-styles'
+import { hudSvg } from './hud-svg'
 
 // crabhud: the crab and the progress bar on top of the band above the prompt, the HUD
 // under them, and the agents panel beside the chat. The engine follows $ only into
@@ -1653,6 +1654,8 @@ const langA = atom({ plugin: 'crabhud', key: 'language' } as const, null)
 // The bars' look, per surface (/hud style).
 const DEFAULT_STYLES: HudStyles = { terminal: 'classic', desktop: 'pixel' }
 const styleA = atom({ plugin: 'crabhud', key: 'style' } as const, DEFAULT_STYLES)
+// Every 30 s: the app's HUD reads it, so its reset countdowns stay current.
+const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
 const STYLE_PANE = 'crabhud-style'
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
@@ -2170,6 +2173,7 @@ async function hudStart($: EngineInterface): Promise<void> {
         if (tick % 40 === 0) await pullCompactWindow($)
         if (tick % 4 === 0) await applyUsage($, await $.session.usage())
         if (record === null && tick % 200 === 0) record = await findRecord($)
+        if (tick % 120 === 0) await update($, tickA, n => n + 1)
       } finally {
         busy = false
       }
@@ -2391,8 +2395,29 @@ const registerHud: Register = on => {
       now: await $.clock.now(),
     }
 
-    // Only the terminal and the desktop draw a Client; every other surface
-    // (a Remote Control viewer) gets the still row.
+    // The app: the hook draws the HUD as one SVG (bars in the picked style,
+    // the spinner and Ultracode's wave in CSS), with ▾/▴ beside it to open
+    // and close it.
+    if (e.surface === 'desktop' && 'Svg' in els) {
+      const { Svg } = els
+      await read($, tickA)
+      const W = Math.max(240, (e.props.bodyColumns || 100) * 8 - 40)
+      const hud = hudSvg(props, W, props.expanded)
+      const toggle = async () => {
+        const open = !(await read($, expandedA))
+        await update($, expandedA, () => open)
+        await $.store.set('expanded', open)
+      }
+      return below(
+        <Box key="hud" flexDirection="row" alignItems={props.expanded ? 'flex-start' : 'center'} gap={1}>
+          <Svg key="hud-svg" source={hud.svg} alt={hud.alt} width={W} height={hud.height} />
+          <Button key="hud-toggle" label={props.expanded ? '▴' : '▾'} plain onPress={toggle} />
+        </Box>,
+      )
+    }
+
+    // The terminal draws a Client; every other surface (a Remote Control
+    // viewer) gets the still row.
     if ((e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in els) {
       const { Client } = els
       return below(<Client key="hud" module="./hud-client.tsx" width="100%" props={props} />)

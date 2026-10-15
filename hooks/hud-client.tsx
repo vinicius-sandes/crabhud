@@ -2,6 +2,7 @@ import type { ClientModule, RenderElement } from 'claude-code'
 
 import type { HudLimit, HudProps } from '../types'
 import { barCells, mergeCells } from './bar-styles'
+import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pctText, tone } from './hud-words'
 
 type State = { open: boolean; frame: number; refresh: number }
 type Seg = { t: string; c?: string; dim?: boolean; bold?: boolean }
@@ -12,21 +13,7 @@ type Piece =
   | { bar: { p: number | null; n: number; base: string } }
   | { el: RenderElement; w: number }
 
-const GREEN = '#3FB68B'
-const PURPLE = '#8B83E6'
-const AMBER = '#E9A23B'
-const RED = '#E5534B'
-const ORANGE = '#D97757'
 const SPIN = ['✻', '✶', '✷', '✸', '✹', '✺']
-// Effort from calm to loud on the desktop: grey, sky, the HUD's purple,
-// magenta, hot pink.
-const EFFORT_COLOR: Record<string, string> = {
-  low: '#9AA0A8',
-  medium: '#5AA9E6',
-  high: PURPLE,
-  xhigh: '#C86DD7',
-  max: '#F25F8B',
-}
 // The terminal's own effort picker: low yellow, medium green, high purple
 // (xhigh and max wear a theme, below).
 const TERMINAL_EFFORT_COLOR: Record<string, string> = {
@@ -35,45 +22,6 @@ const TERMINAL_EFFORT_COLOR: Record<string, string> = {
   high: PURPLE,
   xhigh: PURPLE,
   max: '#F25F8B',
-}
-// Every word the HUD draws, per language. The effort names are the app's
-// picker's; Ultracode is its own switch on top of `xhigh`, which the hooks
-// module reports apart, as `ultracode`.
-const WORDS = {
-  en: {
-    effortNames: { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' } as Record<string, string>,
-    ready: 'ready',
-    working: 'working',
-    alert: 'alert',
-    effort: 'effort',
-    chat: 'chat',
-    context: 'context',
-    fiveHour: '5h limit',
-    sevenDay: '7d limit',
-    spend: 'spend',
-    resetsIn: (t: string) => `↻ resets in ${t}`,
-    reset: '↻ reset',
-    noReading: 'no reading yet',
-    account: 'account',
-    now: 'now',
-  },
-  'pt-BR': {
-    effortNames: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string>,
-    ready: 'pronto',
-    working: 'rodando',
-    alert: 'atenção',
-    effort: 'esforço',
-    chat: 'chat',
-    context: 'contexto',
-    fiveHour: 'limite 5h',
-    sevenDay: 'limite 7d',
-    spend: 'gasto',
-    resetsIn: (t: string) => `↻ reseta em ${t}`,
-    reset: '↻ resetou',
-    noReading: 'sem leitura ainda',
-    account: 'conta',
-    now: 'agora',
-  },
 }
 // Ultracode's label shimmers through these, letter by letter.
 const ULTRA = ['#8B83E6', '#A58BEB', '#C86DD7', '#E46FB0', '#F25F8B', '#E46FB0', '#C86DD7', '#A58BEB']
@@ -87,31 +35,9 @@ let latest: HudProps | null = null
 // The sample the picker's previews draw, in percent.
 const SAMPLE = 64
 
-const tone = (p: number, base: string) => (p >= 90 ? RED : p >= 70 ? AMBER : base)
-
 function nowMs(props: HudProps): number {
   return typeof Date === 'function' ? Date.now() : props.now
 }
-
-function fmtLeft(ms: number, tight: boolean, now: string): string {
-  if (ms <= 0) return now
-  const min = Math.floor(ms / 60000)
-  const d = Math.floor(min / 1440)
-  const h = Math.floor((min % 1440) / 60)
-  const m = min % 60
-  const sp = tight ? '' : ' '
-  if (d > 0) return `${d}d${sp}${h}h`
-  if (h > 0) return `${h}h${sp}${m}m`
-  return `${m}m`
-}
-
-function fmtTok(n: number): string {
-  if (n >= 1e6) return `${+(n / 1e6).toFixed(1)}M`
-  if (n >= 1e3) return `${Math.round(n / 1e3)}k`
-  return String(n)
-}
-
-const pctText = (p: number | null) => (p === null ? '—' : `${Math.round(p)}%`)
 
 // Ultracode's backdrop: a soft dither wave drifting across the band. 0 is
 // blank, 1-3 the ·, ░ and ▒ steps.

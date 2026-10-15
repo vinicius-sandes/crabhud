@@ -137,6 +137,8 @@ declare module 'claude-code' {
       alerted: string[]
       language: HudLang | null
       style: HudStyles
+      /** Bumped every 30 s so the app's HUD redraws its reset countdowns. */
+      tick: number
       // Progress bar and agents panel
       flow: Flow | null
       agents: AgentRun[]
