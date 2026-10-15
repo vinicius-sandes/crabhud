@@ -1,4 +1,9 @@
-# crabhud
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+    <img src="assets/hero-light.svg" alt="crabhud: its five crabs, one per mood, and the band above the Claude Code prompt in the desktop app: the crab row taking turns through working, thinking, analyzing, coordinating and sleeping, and the HUD under it with the model, effort, context, the 5-hour and 7-day limits and the cost" width="100%">
+  </picture>
+</p>
 
 A Claude Code mod that sits right above the prompt and beside the chat:
 
@@ -9,15 +14,33 @@ A Claude Code mod that sits right above the prompt and beside the chat:
 - **The agents panel** (`/agents-info`): running, finished and planned subagents with model, effort, progress, context, cost and time, each with its own crab.
 - **`/savvy-flow`**: an orchestrated delivery flow. The session model plans, owns the design and reviews; five tiered worker agents (`savvy-fable`, `savvy-heavy`, `savvy-careful`, `savvy-medium`, `savvy-light`) implement. The flow drives the progress bar, and each worker reports its own steps to the panel.
 
-```
-✓ Opus 5.5  High   │   ctx ███▒····· 31%   │   5h ██▒······ 20%  ↻ 2h39m   │   7d █████▓▒·· 58%  ↻ 1d6h   │   $4.32   ▾
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/moments-dark.svg">
+    <img src="assets/moments-light.svg" alt="Four moments in the desktop app: the crab walking while Claude works, a progress bar for a long job, the row turning amber when Claude waits for your permission, and the expanded HUD with the limits and how fast they fill" width="880">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/hud-dark.svg">
+    <img src="assets/hud-light.svg" alt="The HUD compact, in one line, and expanded, one row per reading; the 5-hour limit fills fast enough to run out before it resets, so its pace is amber" width="880">
+  </picture>
+</p>
+
 
 Switch the HUD between **compact** (one line) and **expanded** (one row per reading, with token counts and full reset times): in the desktop app with the ▾/▴ button beside it, in the terminal by clicking anywhere on it. Your choice is remembered.
 
 ## Styles
 
 Seven styles for every bar crabhud draws: the progress bar, the HUD's gauges and the bars in the agents panel. Pick one with `/crabhud style`: a picker with a live preview of each (keys 1–7). The desktop app and the terminal each keep their own pick; `/crabhud style <name>` sets both at once.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/styles-dark.svg">
+    <img src="assets/styles-light.svg" alt="The seven bar styles on the same progress bar: Pixel, Segments, Line, Solid, Dots, Spark and Classic" width="880">
+  </picture>
+</p>
 
 In the desktop app the bars are drawn shapes: a rounded track with the fill inside it and, on the bigger bars, a tag with the count or the percentage. In the terminal they are text:
 
@@ -46,6 +69,17 @@ The loudest settings get their own look, following each surface's own effort pic
 When the context or a limit crosses 90%, you get a toast.
 
 crabhud brings together what used to be pixel-hud, a copy of savvy-progress and savvy-flow. Don't load any of them alongside it.
+
+## The agents panel
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/panel-dark.svg">
+    <img src="assets/panel-light.svg" alt="The agents panel: the flow with its cost, tokens and time, and three subagents, each with its own crab, model, effort, steps, context and cost" width="440">
+  </picture>
+</p>
+
+`/agents-info` opens it beside the chat. Each subagent gets a card with its crab, its model and effort, the steps it reports, its context, cost and time; the cards stay after they finish, with a check, and the header adds them up.
 
 ## Portraits of your own agents
 
