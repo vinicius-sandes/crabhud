@@ -30,7 +30,7 @@ function world(
   on: any,
   env: Record<string, string> = {},
   files: Map<string, string> = new Map(),
-  store: Record<string, unknown> = { language: 'en' },
+  store: Record<string, unknown> | null = { language: 'en' },
   settings: Record<string, unknown> = {},
 ) {
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
@@ -41,7 +41,7 @@ function world(
   const mtimes = new Map<string, number>()
   let writes = 1
   const clock = mock.clock(on, { now })
-  mock.store(on, store)
+  if (store) mock.store(on, store)
   on('settings.read', () => ({ value: settings }) as any)
   beneath = null
   // The engine's own band is empty here; a test's mods beneath draw into it.
@@ -768,6 +768,82 @@ test("the panel's step list reads down each column and numbers every step of the
   expect(at('B4').x > at('B3').x).toBe(true)
   expect(at('B4').y).toBe(at('B0').y)
   await ui.unmount()
+})
+
+// The bar as PROGRESS leaves it, kept on disk for chat sess-1.
+const KEPT = {
+  title: 'Sample project',
+  total: 14,
+  done: 5,
+  running: 0,
+  phase: 'delegate',
+  isFinished: false,
+  tasks: [],
+  step: '',
+  groups: [
+    { name: 'start', steps: Array.from({ length: 8 }, (_, i) => `B${i}`), short: Array(8).fill('') },
+    { name: 'middle', steps: Array.from({ length: 6 }, (_, i) => `I${i}`), short: Array(6).fill('') },
+  ],
+  source: 'tool',
+}
+
+test('the bar is kept on disk for its chat as it moves, and dropped when the person closes it', async ($, on) => {
+  // A store the test can look into.
+  const store: Record<string, any> = { language: 'en' }
+  world(on, {}, new Map(), null)
+  on('store.get', ((_$: unknown, e: { key: string }) => ({ value: store[e.key] })) as any)
+  on('store.set', ((_$: unknown, e: { key: string; value: unknown }) => {
+    store[e.key] = JSON.parse(JSON.stringify(e.value))
+    return { value: undefined }
+  }) as any)
+  on('store.delete', ((_$: unknown, e: { key: string }) => {
+    delete store[e.key]
+    return { value: undefined }
+  }) as any)
+  on('store.keys', () => ({ value: Object.keys(store) }) as any)
+  panes(on)
+  await start($, on)
+  await $.tool.call(PROGRESS as any)
+  expect(store.bars['sess-1'].flow.title).toBe('Sample project')
+  expect(store.bars['sess-1'].flow.done).toBe(5)
+  const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  await app.press({ key: 'savvy-dismiss' })
+  expect(store.bars['sess-1'].flow).toBe(null)
+  // A lone step forward after that draws nothing.
+  await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
+  await app.unmount()
+  const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  expect(await allText(term)).not.toContain('Sample project')
+  await term.unmount()
+})
+
+test('a reopened chat finds its bar again, and a lone done carries on from it', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en', bars: { 'sess-1': { flow: KEPT, at: now } } })
+  panes(on)
+  await start($, on)
+  const before = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  const line = await allText(before)
+  expect(line).toContain('Sample project')
+  expect(line).toContain('36%')
+  await before.unmount()
+  await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
+  const after = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  const moved = await allText(after)
+  expect(moved).toContain('Sample project')
+  expect(moved).toContain('43%')
+  expect(moved).not.toContain('savvy-flow')
+  await after.unmount()
+})
+
+test('a lone done with no bar anywhere draws no empty bar and asks for the plan again', async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  const r = await $.tool.call({ tool: PROGRESS.tool, done: 3 } as any)
+  expect(JSON.stringify(r)).toContain('groups')
+  const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  expect(await allText(term)).not.toContain('savvy-flow')
+  await term.unmount()
 })
 
 test('every style draws the progress bar, unfinished and finished', async ($, on) => {

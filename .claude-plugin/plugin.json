@@ -1,6 +1,6 @@
 {
   "name": "crabhud",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Above the prompt: a crab that shows what Claude is doing, a progress bar for long jobs (also on its own from Claude's task list or an approved plan), and a HUD with model, effort, context, 5-hour and 7-day limits and cost, in seven bar styles (/crabhud style). Beside it: a live panel of subagents. Ships the /savvy-flow skill and its five worker agents.",
   "author": {
     "name": "Vinicius Sandes"
