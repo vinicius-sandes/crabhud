@@ -203,15 +203,17 @@ test('labels follow the picked language', async ($, on) => {
 })
 
 test('ultracode shimmers behind the band and stays readable', async ($, on) => {
-  // The desktop app's record of this chat, with Ultracode switched on.
+  // The desktop app's record of this chat, with Ultracode switched on, where
+  // the Mac app keeps it: under APPDATA, the record was found only when the
+  // tests ran on Windows (on a Mac the mod never got that variable).
   const files = new Map<string, string>()
-  files.set('C:/fake/Claude/claude-code-sessions/org/acct/local_1.json', JSON.stringify({
+  files.set('/home/me/Library/Application Support/Claude/claude-code-sessions/org/acct/local_1.json', JSON.stringify({
     cliSessionId: 'sess-1',
     model: 'claude-opus-5-5',
     effort: 'xhigh',
     sessionSettings: { ultracode: true },
   }))
-  world(on, { APPDATA: 'C:/fake' }, files)
+  world(on, {}, files)
   panes(on)
   await start($, on)
   await $.session.measure(measure)
