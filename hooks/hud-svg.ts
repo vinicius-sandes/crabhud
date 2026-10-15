@@ -89,7 +89,7 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   }
   const left = (l: Lim, tight: boolean) => (l?.resetsAt != null ? fmtLeft(l.resetsAt - now, tight, words.now) : '')
   const svg = (H: number, body: string) =>
-    `<svg xmlns="http://www.w3.org/2000/svg" data-style="${p.style}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>${CSS}${BAR_CSS}</style>${wave(H)}${body}</svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" data-hud="1" data-style="${p.style}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>${CSS}${BAR_CSS}</style>${wave(H)}${body}</svg>`
 
   if (!open) {
     // Closed: shrink the bars first, then drop the reset times, the effort,

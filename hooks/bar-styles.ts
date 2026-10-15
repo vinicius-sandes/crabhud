@@ -1,4 +1,4 @@
-// The bar styles (/hud style), after claude-deck's (`/deck style`), for every
+// The bar styles (/crabhud style), after claude-deck's (`/deck style`), for every
 // bar crabhud draws: the progress bar, the HUD's gauges and the agents panel.
 // `barSvg` draws one as SVG (the desktop and the remote surfaces), `barCells`
 // as text cells (the terminal). Pure, no `$`.
@@ -22,7 +22,7 @@ export const STYLE_NAMES: Record<BarStyle, string> = {
   classic: 'Classic',
 }
 
-// What each looks like, for /hud style and the picker, per language.
+// What each looks like, for /crabhud style and the picker, per language.
 export const STYLE_HINTS: Record<'en' | 'pt-BR', Record<BarStyle, string>> = {
   en: {
     pixel: 'a rounded track, twinkling pixels, the % on a tag',

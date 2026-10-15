@@ -5,6 +5,7 @@ import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, H
 import { BAR_CSS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
 import type { Cell } from './bar-styles'
 import { hudSvg } from './hud-svg'
+import { CYCLE, CYCLE_S } from './hud-words'
 
 // crabhud: the crab and the progress bar on top of the band above the prompt, the HUD
 // under them, and the agents panel beside the chat. The engine follows $ only into
@@ -413,7 +414,7 @@ const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle): string => {
   })
   const percent = `${Math.round(ratio(f) * 100)}%`
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${RH}" viewBox="0 0 ${W} ${RH}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" data-style="${style}" width="${W}" height="${RH}" viewBox="0 0 ${W} ${RH}">
 <style>
 .t{fill:#1f1f1f}.m{fill:#6f6d67}
 @media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}
@@ -933,8 +934,8 @@ const statusMark = (x: number, y: number, status: string, color: string): string
   return `<circle cx="${x}" cy="${y}" r="5" fill="none" stroke="#9a9a96" stroke-width="1.4"/><path d="M${x} ${y - 2.5}v2.8l1.8 1.2" fill="none" stroke="#9a9a96" stroke-width="1.4" stroke-linecap="round"/>`
 }
 
-const svg = (W: number, H: number, body: string): string =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}<style>${BAR_CSS}</style>${CRAB_CSS}${body}</svg>`
+const svg = (W: number, H: number, body: string, attrs = ''): string =>
+  `<svg xmlns="http://www.w3.org/2000/svg"${attrs} width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}<style>${BAR_CSS}</style>${CRAB_CSS}${body}</svg>`
 
 // The pane's own title already says "Agents": the header names the flow, if any.
 const headerSvg = (W: number, title: string, t: ReturnType<typeof totals>): string => {
@@ -1029,6 +1030,7 @@ ${steps && stepsW > 30 ? `<text class="t" x="42" y="49" font-family="${FONT}" fo
 ${barSvg({ style, x: 42, y: 54, w: barW, h: 8, p: (progress ?? ctx / 100) * 100, colorAt: () => fill, head: fill, live: a.status === 'running' && progress !== null, uid: `a${a.id.replace(/W/g, '')}`, steps: a.stepTotal })}
 ${statusMark(W - 8, 16, a.status, color)}
 <line class="ln" x1="0" y1="65.5" x2="${W}" y2="65.5"/>`,
+    ` data-style="${style}"`,
   )
 }
 
@@ -1556,8 +1558,10 @@ const registerProgress: Register = on => {
     // The drawing gets the slot minus the buttons beside it (the count, the dismiss) and their gaps.
     const buttons = (crew ? Math.round(textWidth(tr().agentsN(crew), 13)) + 36 : 0) + (f ? 40 : 0)
     const width = Math.max(180, Math.min(1600, slot - Math.max(24, buttons) - 16))
+    // Drawings everywhere but the terminal, which draws text (its table has no Svg).
+    const vector = e.surface !== 'terminal' && 'Svg' in ui
     const divider =
-      'Svg' in ui ? (
+      vector ? (
         <ui.Svg source={hairline(width)} alt="—" width={width} height={13} />
       ) : (
         <Text dimColor>{'─'.repeat(Math.max(4, e.props.bodyColumns || 40))}</Text>
@@ -1571,7 +1575,7 @@ const registerProgress: Register = on => {
     )
 
     if (f === null) {
-      if ('Svg' in ui) {
+      if (vector) {
         const { Svg } = ui
         return above(
           <Box flexDirection="row" alignItems="center" gap={1}>
@@ -1602,7 +1606,7 @@ const registerProgress: Register = on => {
       />
     )
 
-    if ('Svg' in ui) {
+    if (vector) {
       const { Svg } = ui
       return above(
         <Box flexDirection="row" alignItems="center" gap={1}>
@@ -1651,7 +1655,7 @@ const hiddenA = atom({ plugin: 'crabhud', key: 'hidden' } as const, false)
 const alertedA = atom({ plugin: 'crabhud', key: 'alerted' } as const, [])
 // The HUD's language; null until the person picks one on the first run.
 const langA = atom({ plugin: 'crabhud', key: 'language' } as const, null)
-// The bars' look, per surface (/hud style).
+// The bars' look, per surface (/crabhud style).
 const DEFAULT_STYLES: HudStyles = { terminal: 'classic', desktop: 'pixel' }
 const styleA = atom({ plugin: 'crabhud', key: 'style' } as const, DEFAULT_STYLES)
 // Every 30 s: the app's HUD reads it, so its reset countdowns stay current.
@@ -1663,7 +1667,7 @@ const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style) or 
 
 const TEXT = {
   en: {
-    hidden: 'HUD hidden. Use /hud on to show it again.',
+    hidden: 'HUD hidden. Use /crabhud on to show it again.',
     shown: 'HUD shown.',
     language: (name: string) => `HUD language: ${name}.`,
     style: (name: string) => `HUD style: ${name}.`,
@@ -1678,7 +1682,7 @@ const TEXT = {
     now: 'now',
   },
   'pt-BR': {
-    hidden: 'HUD escondido. Use /hud on para mostrar.',
+    hidden: 'HUD escondido. Use /crabhud on para mostrar.',
     shown: 'HUD visível.',
     language: (name: string) => `Idioma do HUD: ${name}.`,
     style: (name: string) => `Estilo do HUD: ${name}.`,
@@ -2121,7 +2125,7 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
 // Session start, before the other hooks: the command, what was saved, and the clock.
 // The mod's register.tsx calls it (one session.start hook for the whole mod).
 async function hudStart($: EngineInterface): Promise<void> {
-  await $.command.register({ name: 'hud', description: COMMAND })
+  await $.command.register({ name: 'crabhud', description: COMMAND })
 
   const [savedExpanded, savedHidden, lang, savedStyle] = await Promise.all([
     $.store.get('expanded'),
@@ -2233,6 +2237,17 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
     now: await $.clock.now(),
   }
   const sample = (style: HudStyle) => {
+    // The app: the sample bar drawn as the band draws it, alive, its colour
+    // drifting through the palette in a loop, every row in step.
+    if (e.surface === 'desktop' && 'Svg' in els) {
+      const { Svg } = els as any
+      const w = 160
+      const bar = barSvg({ style, x: 1, y: 1, w: w - 2, h: 12, p: 64, colorAt: () => CYCLE[0] ?? RC.purple, head: CYCLE[0] ?? RC.purple, live: true, uid: `s${style}` })
+      const stops = [...CYCLE, CYCLE[0]].map((c, k, all) => `${Math.round((k / (all.length - 1)) * 1000) / 10}%{fill:${c}}`).join('')
+      const drift = `.pc [fill]:not([fill^="url"]):not([fill="none"]){animation:pc ${CYCLE_S}s ease-in-out infinite}@keyframes pc{${stops}}@media (prefers-reduced-motion: reduce){.pc [fill]{animation:none}}`
+      const source = `<svg xmlns="http://www.w3.org/2000/svg" data-preview="${style}" width="${w}" height="14" viewBox="0 0 ${w} 14"><style>${BAR_CSS}${drift}</style><g class="pc">${bar}</g></svg>`
+      return <Svg key={`style-preview-${style}`} source={source} alt={`${STYLE_NAMES[style]}: ${STYLE_HINTS[lang][style]}`} width={w} height={14} />
+    }
     if (live) {
       const { Client } = els as any
       return <Client key={`style-preview-${style}`} module="./hud-client.tsx" props={{ ...base, style, preview: n }} />
@@ -2304,11 +2319,11 @@ const registerHud: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'hud' }, async ($, e) => {
+  on('command.run', { command: 'crabhud' }, async ($, e) => {
     const [arg = '', value = ''] = e.args.trim().split(/\s+/)
     if (/^style$/i.test(arg)) {
       const T = TEXT[(await read($, langA)) ?? 'en']
-      // A bare `/hud style` opens the picker; `/hud style dots` sets it on
+      // A bare `/crabhud style` opens the picker; `/crabhud style dots` sets it on
       // every surface at once.
       if (!value) {
         await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
@@ -2320,7 +2335,7 @@ const registerHud: Register = on => {
       return { text: T.style(STYLE_NAMES[style]) }
     }
     if (/^lang(uage)?$/i.test(arg)) {
-      // `/hud language pt-BR` sets it; a bare `/hud language` asks again.
+      // `/crabhud language pt-BR` sets it; a bare `/crabhud language` asks again.
       const lang = asLang(value)
       if (lang === null) {
         await update($, langA, () => null)
@@ -2375,7 +2390,7 @@ const registerHud: Register = on => {
           <Text bold>Choose the HUD language:</Text>
           <Button key="lang-en" label="English" hotkey="1" onPress={() => chooseLanguage($, 'en')} />
           <Button key="lang-pt-BR" label="Português (BR)" hotkey="2" onPress={() => chooseLanguage($, 'pt-BR')} />
-          <Text dimColor>You can change it anytime with /hud language</Text>
+          <Text dimColor>You can change it anytime with /crabhud language</Text>
         </Box>,
       )
     }

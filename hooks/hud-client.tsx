@@ -2,7 +2,7 @@ import type { ClientModule, RenderElement } from 'claude-code'
 
 import type { HudLimit, HudProps } from '../types'
 import { barCells, mergeCells } from './bar-styles'
-import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pctText, tone } from './hud-words'
+import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pctText, tone, CYCLE_S, cycleAt } from './hud-words'
 
 type State = { open: boolean; frame: number; refresh: number }
 type Seg = { t: string; c?: string; dim?: boolean; bold?: boolean }
@@ -163,7 +163,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
     return (
       <Box flexDirection="row" columnGap={1} alignItems="center">
         {text({ t: 'ctx', dim: true })}
-        {bar(SAMPLE, preview, PURPLE)}
+        {bar(SAMPLE, preview, cycleAt((st.frame * 0.2) / CYCLE_S))}
         {text({ t: `${SAMPLE}%`, bold: true })}
       </Box>
     )

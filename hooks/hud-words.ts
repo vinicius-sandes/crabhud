@@ -75,3 +75,24 @@ export function fmtTok(n: number): string {
 export const pctText = (p: number | null) => (p === null ? '—' : `${Math.round(p)}%`)
 
 export const tone = (p: number, base: string) => (p >= 90 ? RED : p >= 70 ? AMBER : base)
+
+// The style picker's samples drift through the mod's own colours, one into
+// the next, once around the colour wheel: the context's purple, the base
+// group's blue, a teal, the limits' green, the low effort's yellow (so green
+// does not turn muddy on its way to orange), the final group's orange, a pink,
+// the intermediate group's violet.
+export const CYCLE = ['#8B83E6', '#3B7FF5', '#3FA7B5', '#3FB68B', '#E9C46A', '#F08C2E', '#E46FB0', '#A259E6']
+/** Seconds the samples take through the whole palette. */
+export const CYCLE_S = 14
+
+const hex = (c: string) => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16))
+/** The palette's colour at `f` (0-1 around the loop), blended between its neighbours. */
+export function cycleAt(f: number): string {
+  const x = (((f % 1) + 1) % 1) * CYCLE.length
+  const i = Math.floor(x)
+  const a = hex(CYCLE[i] ?? '#8B83E6')
+  const b = hex(CYCLE[(i + 1) % CYCLE.length] ?? '#8B83E6')
+  // Eased, so each colour lingers a little before it gives way.
+  const t = (1 - Math.cos((x - i) * Math.PI)) / 2
+  return '#' + a.map((v, k) => Math.round(v + ((b[k] ?? v) - v) * t).toString(16).padStart(2, '0')).join('')
+}

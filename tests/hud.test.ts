@@ -90,7 +90,7 @@ async function shown(ui: any): Promise<string> {
 
 // The app's HUD: one Svg the hook draws, and its ▾/▴ Button.
 async function hudSvg(ui: any): Promise<any> {
-  return (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.source).includes('data-style='))
+  return (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.source).includes('data-hud='))
 }
 // Sizes the terminal's Client; the app's drawing takes the band's width.
 async function fit(ui: any, size: { columns: number; rows: number; in: string }): Promise<void> {
@@ -167,7 +167,7 @@ test('the first run asks for the language, once, in English', async ($, on) => {
     const ask = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
     console.log(`${surface} first run: ${ask}`)
     expect(ask).toContain('Choose the HUD language')
-    expect(ask).toContain('/hud language')
+    expect(ask).toContain('/crabhud language')
     expect(await ui.find({ key: 'lang-en' })).toBeDefined()
     if (surface === 'desktop') {
       await ui.press({ key: 'lang-pt-BR' })
@@ -555,7 +555,7 @@ test('terminal: Ultracode set in settings (--settings) shows from the start', as
   await ui.unmount()
 })
 
-// ---- Bar styles (/hud style) ----
+// ---- Bar styles (/crabhud style) ----
 
 const PICKER = {
   component: 'Pane',
@@ -584,12 +584,12 @@ async function barGlyphs(ui: any): Promise<string> {
   return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇⣀-⣿ ]/g, '')
 }
 
-test('/hud style <name> sets the bars on every surface and keeps the pick', async ($, on) => {
+test('/crabhud style <name> sets the bars on every surface and keeps the pick', async ($, on) => {
   world(on)
   panes(on)
   await start($, on)
   await $.session.measure(measure)
-  const said = await $.command.run({ command: 'hud', args: 'style segments' })
+  const said = await $.command.run({ command: 'crabhud', args: 'style segments' })
   expect(said.text).toBe('HUD style: Segments.')
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
@@ -601,7 +601,7 @@ test('/hud style <name> sets the bars on every surface and keeps the pick', asyn
     expect(g).not.toContain('█')
     await ui.unmount()
   }
-  const bad = await $.command.run({ command: 'hud', args: 'style plaid' } as any)
+  const bad = await $.command.run({ command: 'crabhud', args: 'style plaid' } as any)
   expect(bad.text).toContain('No style "plaid"')
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   await fit(ui, { columns: 120, rows: 1, in: 'hud' })
@@ -624,18 +624,21 @@ test('a saved style comes back with the next session', async ($, on) => {
   await desk.unmount()
 })
 
-test('/hud style opens the picker: seven live previews, a key each, the pick per surface', async ($, on) => {
+test('/crabhud style opens the picker: seven live previews (Client in the terminal, Svg in the app), a key each, the pick per surface', async ($, on) => {
   world(on)
   const opened = panes(on)
   await start($, on)
   await $.session.measure(measure)
-  await $.command.run({ command: 'hud', args: 'style' } as any)
+  await $.command.run({ command: 'crabhud', args: 'style' } as any)
   expect(opened.at(-1)).toMatchObject({ id: 'crabhud-style', focus: true, closeOnEscape: true })
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...PICKER } as any)
-    const previews = await ui.findAll({ type: 'Client' })
-    expect(previews).toHaveLength(7)
-    expect(previews.map((c: any) => c.props.props.style)).toEqual(['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic'])
+    // The terminal previews through the Client; the app draws each sample as an Svg.
+    const previews = surface === 'terminal'
+      ? (await ui.findAll({ type: 'Client' })).map((c: any) => c.props.props.style)
+      : (await ui.findAll({ type: 'Svg' })).map((c: any) => String(c.props.source).match(/data-preview="(\w+)"/)?.[1])
+    expect(previews).toEqual(['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic'])
+    if (surface === 'desktop') expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
     const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
     expect(words).toContain('← now')
     expect(words).toContain('Press 1/2/3/4/5/6/7')
@@ -662,7 +665,7 @@ test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => 
   panes(on)
   await start($, on)
   for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic']) {
-    await $.command.run({ command: 'hud', args: `style ${style}` } as any)
+    await $.command.run({ command: 'crabhud', args: `style ${style}` } as any)
     for (const surface of ['terminal', 'desktop'] as const) {
       for (const pct of [0, 64, 100]) {
         await $.session.measure(reading(pct, pct))
@@ -682,11 +685,94 @@ test('the Remote Control row draws the picked style too', async ($, on) => {
   panes(on)
   await start($, on)
   await $.session.measure(measure)
-  await $.command.run({ command: 'hud', args: 'style segments' } as any)
+  await $.command.run({ command: 'crabhud', args: 'style segments' } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'mobile', ...BAND } as any)
   const line = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join('')
   console.log(`remote segments: ${line}`)
   expect(line).toContain('▰')
   expect(line).not.toContain('█')
   await ui.unmount()
+})
+
+// ---- The progress bar and the agents panel in the picked styles ----
+
+// The flow as an orchestrator reports it: two groups, 5 of 14 steps done.
+const PROGRESS = {
+  tool: 'mcp__crabhud__progress',
+  title: 'Roacutan e acne',
+  done: 5,
+  groups: [
+    { name: 'base', steps: Array.from({ length: 8 }, (_, i) => `b${i}`) },
+    { name: 'intermediária', steps: Array.from({ length: 6 }, (_, i) => `i${i}`) },
+  ],
+}
+
+const PANEL = {
+  component: 'Pane',
+  requestId: 'crabhud-agents',
+  props: { title: 'Agents', isFocused: false, bodyColumns: 60, placement: 'side' },
+} as const
+
+const progressRow = async (ui: any) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Roacutan'))
+const allText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join('')
+
+test('the progress bar takes the app style in the app and the terminal style in the terminal', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en', style: { terminal: 'dots', desktop: 'segments' } })
+  panes(on)
+  await start($, on)
+  await $.tool.call(PROGRESS as any)
+  const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  const src = String((await progressRow(app))?.props.source)
+  expect(src).toContain('data-style="segments"')
+  // Each group keeps its colour along the bar, and the count sits on the tag.
+  expect(src).toContain('#3B7FF5')
+  expect(src).toContain('#A259E6')
+  expect(src).toContain('5/14')
+  await app.unmount()
+  const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  const line = await allText(term)
+  console.log(`terminal progress (dots): ${line}`)
+  expect(line).toContain('●')
+  expect(line).toContain('○')
+  expect(line).not.toContain('░')
+  await term.unmount()
+})
+
+test('every style draws the progress bar, unfinished and finished', async ($, on) => {
+  world(on)
+  panes(on)
+  await start($, on)
+  for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic']) {
+    await $.command.run({ command: 'crabhud', args: `style ${style}` } as any)
+    for (const done of [5, 14]) {
+      await $.tool.call({ ...PROGRESS, done } as any)
+      const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+      expect(String((await progressRow(app))?.props.source)).toContain(`data-style="${style}"`)
+      await app.unmount()
+      const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+      const line = await allText(term)
+      expect(line).toContain('Roacutan')
+      expect(line).toContain(done === 14 ? '100%' : '36%')
+      await term.unmount()
+    }
+  }
+})
+
+test("the panel's bars follow the styles too: the app's in the app, the terminal's in the terminal", async ($, on) => {
+  world(on, {}, new Map(), { language: 'en', style: { terminal: 'segments', desktop: 'line' } })
+  panes(on)
+  on('agent.spawn', () => ({ agentId: 'agent-1', model: 'claude-fable-5-1' }) as any)
+  await start($, on)
+  await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'review', description: 'Revisar o register.tsx', subagentType: 'savvy-fable' } as any)
+  const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
+  const card = (await app.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Revisar'))
+  expect(String(card?.props.source)).toContain('data-style="line"')
+  await app.unmount()
+  const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...PANEL } as any)
+  const text = await allText(term)
+  console.log(`terminal panel (segments): ${text}`)
+  expect(text).toContain('Revisar o register.tsx')
+  expect(text).toContain('▱')
+  expect(text).not.toContain('░')
+  await term.unmount()
 })
