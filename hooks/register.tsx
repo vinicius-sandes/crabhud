@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput, SessionRateLimit, SessionUsage, ToolCallInput, TurnStepResult } from 'claude-code'
 
-import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup } from '../types'
-import { BAR_CSS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
+import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup, Waiting } from '../types'
+import { BAR_CSS, GLIDE_MS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
 import type { Cell } from './bar-styles'
 import { hudSvg } from './hud-svg'
 import { CYCLE, CYCLE_S } from './hud-words'
@@ -26,6 +26,30 @@ const panel = atom({ plugin: 'crabhud', key: 'panel' } as const, {
 const now = atom({ plugin: 'crabhud', key: 'now' } as const, 0)
 // The main agent's tool in flight, for the crab's mood; null between tools.
 const activity = atom({ plugin: 'crabhud', key: 'activity' } as const, null)
+// Claude waiting on the person (a permission, its own question); null otherwise.
+const waitingA = atom({ plugin: 'crabhud', key: 'waiting' } as const, null)
+// Sounds, off until /crabhud sound on.
+const soundA = atom({ plugin: 'crabhud', key: 'sound' } as const, false)
+// The calls in flight: an ask still pending after ASK_DELAY_MS is a prompt on screen.
+const inFlight = new Set<string>()
+// An ask the mode settles at once (rules, auto mode) never shows: wait this long first.
+const ASK_DELAY_MS = 600
+
+// A short clip of the mod's own (sounds/wait.wav, sounds/done.wav), when sounds are on.
+async function chime($: EngineInterface, name: 'wait' | 'done') {
+  if (!(await read($, soundA))) return
+  void $.audio.play({ asset: `sounds/${name}.wav` }, { gain: 0.6 }).catch(() => undefined)
+}
+
+async function startWaiting($: EngineInterface, w: Waiting) {
+  const before = await read($, waitingA)
+  await update($, waitingA, () => w)
+  if (before === null) await chime($, 'wait')
+}
+
+// The scene the walking crab plays: its mood and when it began, so a redraw
+// picks the walk up where it was.
+let scene = { mood: '', at: 0 }
 
 const TOOL = 'mcp__crabhud__progress'
 const STEP_TOOL = 'mcp__crabhud__step'
@@ -81,6 +105,8 @@ const STRINGS = {
     busy: 'running',
     sleep: 'sleeping',
     sleepHint: 'waiting for the next task',
+    waitPermission: 'waiting for your permission',
+    waitAnswer: 'waiting for your answer',
     think: 'thinking',
     analyze: 'analyzing',
     work: 'working',
@@ -121,6 +147,8 @@ const STRINGS = {
     busy: 'в работе',
     sleep: 'спит',
     sleepHint: 'ждёт следующую задачу',
+    waitPermission: 'ждёт вашего разрешения',
+    waitAnswer: 'ждёт вашего ответа',
     think: 'думает',
     analyze: 'анализирует',
     work: 'работает',
@@ -161,6 +189,8 @@ const STRINGS = {
     busy: 'rodando',
     sleep: 'dormindo',
     sleepHint: 'esperando a próxima tarefa',
+    waitPermission: 'esperando sua permissão',
+    waitAnswer: 'esperando sua resposta',
     think: 'pensando',
     analyze: 'analisando',
     work: 'trabalhando',
@@ -359,7 +389,7 @@ const groupColor = (name: string, i: number): string => GROUP_COLOR[name.toLower
 // The row is taller when the bar carries the groups' names under it.
 const rowHeight = (f: Flow): number => (f.groups.length ? 40 : H)
 
-const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle): string => {
+const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: number; age: number }): string => {
   const RH = rowHeight(f)
   // The title takes what it needs, up to 40% of the row; the bar takes the rest.
   const title = fitText(f.title, 13, Math.max(60, W * 0.4))
@@ -400,6 +430,7 @@ const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle): string => {
     live: !f.isFinished,
     uid: 'p',
     label: label(f),
+    from,
     steps: f.total,
     gaps: spans.slice(1).map(sp => sp.f0),
   })
@@ -439,6 +470,70 @@ const moodSvg = (W: number, mood: Mood, text: string): string => `<svg xmlns="ht
 ${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
 <text x="${CRAB_W + 8}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(text.split(' · ')[0] ?? text)}</tspan><tspan class="m">${xml(text.includes(' · ') ? ' · ' + fitText(text.split(' · ').slice(1).join(' · '), 13, W - CRAB_W - 120) : '')}</tspan></text>
 </svg>`
+
+// No flow running and Claude at work: the text stays at the left and the crab
+// walks sideways through the free part of the row, stops to do what Claude is
+// doing, and walks on. One loop of WALK_S seconds; `age` (ms since the scene
+// began) sets a negative delay, so a redraw picks the loop up where it was
+// instead of starting it over. Asleep, the crab keeps still (moodSvg).
+const WALK_S = 16
+const walkSvg = (W: number, mood: Mood, text: string, age: number): string => {
+  const [head = text, ...rest] = text.split(' · ')
+  const tail = rest.length ? ' · ' + fitText(rest.join(' · '), 13, Math.max(40, W * 0.45)) : ''
+  const lo = Math.round(textWidth(head + tail, 13) * 1.04 + 26)
+  const hi = W - CRAB_W - 2
+  // Where it stops: fixed per mood, so the same scene walks the same way.
+  const seed = [...mood].reduce((n, ch) => n + ch.charCodeAt(0), 0)
+  const xs = [0.12, 0.6, 0.34].map((f, i) => Math.round(lo + Math.max(0, hi - lo) * ((f + noise(seed, i) * 0.3) % 1)))
+  const at = (pct: number, x: number | undefined) => `${pct}%{transform:translateX(${x ?? lo}px)}`
+  const key = [at(0, xs[0]), at(14, xs[1]), at(50, xs[1]), at(62, xs[2]), at(86, xs[2]), at(100, xs[0])].join('')
+  const delay = -((age / 1000) % WALK_S)
+  const run = (name: string, timing: string) => `animation:${name} ${WALK_S}s ${timing} infinite;animation-delay:${delay.toFixed(2)}s`
+  const css = `<style>.mv{${run('mv', 'ease-in-out')}}@keyframes mv{${key}}
+.wk{${run('wk', 'steps(1)')}}.st{${run('sto', 'steps(1)')}}
+@keyframes wk{0%{opacity:1}14%{opacity:0}50%{opacity:1}62%{opacity:0}86%{opacity:1}}@keyframes sto{0%{opacity:0}14%{opacity:1}50%{opacity:0}62%{opacity:1}86%{opacity:0}}
+/* walking: the same costume, its props still and only the legs stepping */
+.walk .la{animation:st .25s steps(1) infinite}.walk .lb{animation:st .25s steps(1) infinite -.125s}.walk .bd{animation:bob .25s steps(1) infinite -.06s}.walk g{transform-box:fill-box}
+/* the smoke behind it: one trail per stretch of the walk, shown only on that stretch */
+.smk{fill:#aeaaa1}@media (prefers-color-scheme: dark){.smk{fill:#9a978f}}
+.sm0{${run('sm0', 'steps(1)')}}.sm1{${run('sm1', 'steps(1)')}}.sm2{${run('sm2', 'steps(1)')}}
+@keyframes sm0{0%{opacity:1}14%{opacity:0}}@keyframes sm1{0%{opacity:0}50%{opacity:1}62%{opacity:0}}@keyframes sm2{0%{opacity:0}86%{opacity:1}}
+.pf{transform-box:fill-box;transform-origin:center;animation:.8s ease-out infinite}.pf1{animation-delay:-.2s}.pf2{animation-delay:-.4s}.pf3{animation-delay:-.6s}
+.pr .pf{animation-name:pfr}.pl .pf{animation-name:pfl}
+@keyframes pfr{from{transform:translate(0,0) scale(.6);opacity:1}to{transform:translate(-14px,-5px) scale(1.8);opacity:0}}
+@keyframes pfl{from{transform:translate(0,0) scale(.6);opacity:1}to{transform:translate(14px,-5px) scale(1.8);opacity:0}}
+@media (prefers-reduced-motion: reduce){.mv,.wk,.st,.walk .la,.walk .lb,.walk .bd{animation:none}.wk,.sm0,.sm1,.sm2{opacity:0}}</style>`
+  const costume = 'm-' + mood
+  // Walking it wears what it wears when it stops, so nothing comes off on the way.
+  const walking = crab(0, 0, costume, false, false, 0.9).replace(`class="c-${costume}"`, `class="c-${costume} walk"`)
+  // Little pixel puffs at its feet on the side it walks away from; they grow and fade.
+  const CW = Math.round((CRAB_W * 0.9) / CRAB_SCALE)
+  const puff = (i: number) => `<g class="pf pf${i}"><rect class="smk" x="1" y="${i % 2}" width="4" height="4"/><rect class="smk" x="0" y="${2 + (i % 2)}" width="3" height="3"/><rect class="smk" x="4" y="${3 + (i % 2)}" width="2" height="2"/></g>`
+  const trail = (i: number, from: number, to: number) => {
+    const right = to >= from
+    return `<g class="sm${i} ${right ? 'pr' : 'pl'}" transform="translate(${right ? -3 : CW - 3}, ${H - 10})">${[0, 1, 2, 3].map(puff).join('')}</g>`
+  }
+  const [x0 = lo, x1 = lo, x2 = lo] = xs
+  const smoke = `${trail(0, x0, x1)}${trail(1, x1, x2)}${trail(2, x2, x0)}`
+  return `<svg xmlns="http://www.w3.org/2000/svg" data-walk="${mood}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+<style>.t{fill:#1f1f1f}.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>${CRAB_CSS}${css}
+<text x="0" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(head)}</tspan><tspan class="m">${xml(tail)}</tspan></text>
+<g class="mv">${smoke}<g class="wk">${walking}</g><g class="st">${crab(0, 0, costume, false, true, 0.9)}</g></g></svg>`
+}
+
+// Claude waiting on the person (a permission, a question): the row turns
+// amber, the crab holds up a sign that pulses, beside the text.
+const WAIT = '#E9A23B'
+const waitSvg = (W: number, text: string): string => {
+  const [head = text, ...rest] = text.split(' · ')
+  const tail = rest.length ? ' · ' + fitText(rest.join(' · '), 13, W - CRAB_W - 160) : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" data-wait="1" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+<style>.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.m{fill:#9a9a9a}}.wp{animation:wp 1.2s ease-in-out infinite}@keyframes wp{50%{opacity:.25}}@media (prefers-reduced-motion: reduce){.wp{animation:none}}</style>${CRAB_CSS}
+${crab(0, 0, 'm-think', false, false, 0.9)}
+<g class="wp"><rect x="${CRAB_W - 4}" y="1" width="9" height="11" rx="2" fill="${WAIT}"/><rect x="${CRAB_W - 0.5}" y="3" width="2" height="4.5" fill="#fff"/><rect x="${CRAB_W - 0.5}" y="8.5" width="2" height="2" fill="#fff"/></g>
+<text x="${CRAB_W + 12}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan font-weight="600" fill="${WAIT}">${xml(head)}</tspan><tspan class="m">${xml(tail)}</tspan></text>
+</svg>`
+}
 
 // The terminal's bar: the style's cells, each in its group's color.
 const barText = (f: Flow, width: number, style: HudStyle): Cell[] => {
@@ -1238,7 +1333,13 @@ async function reportProgress($: EngineInterface, e: ToolCallInput) {
     // A new flow starts with a clean list; agents still running stay.
     await update($, agents, list => list.filter(a => a.status === 'running'))
   }
-  const next = await update($, flow, p => merge(p, input))
+  const at = await $.clock.now()
+  const next = await update($, flow, p => {
+    const merged = merge(p, input)
+    // A step forward on the same flow: remember where the tag was, for its glide.
+    if (!p || !merged || isNewFlow(p, input) || ratio(merged) === ratio(p)) return merged
+    return { ...merged, moved: { from: ratio(p) * 100, at } }
+  })
   if (next && input.tasks?.length) await autoOpen($, next.title)
   return { result: `ok: ${label(next ?? blank())}` }
 }
@@ -1349,6 +1450,10 @@ const registerProgress: Register = on => {
         }),
       )
       await update($, now, () => at)
+    } else {
+      // The main turn ended: nothing is waiting on the person any more.
+      await update($, waitingA, () => null)
+      await chime($, 'done')
     }
     return next(e)
   })
@@ -1520,15 +1625,44 @@ const registerProgress: Register = on => {
     )
   })
 
-  // The main agent's tool in flight: what the crab in the corner acts out.
-  on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined || e.tool === 'Agent' || e.tool === TOOL || e.tool === STEP_TOOL) return next(e)
+  // A call the engine puts to the person: once the ask has stood a moment
+  // (a mode that settles it at once never shows a prompt), the row turns amber.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
     const id = e.tool_use_id
-    await update($, activity, () => ({ id, kind: kindOf(e.tool), target: targetOf(e as unknown as Record<string, unknown>) }))
+    if (verdict?.decision === 'ask' && id) {
+      const w: Waiting = { kind: 'permission', tool: e.tool, detail: targetOf((e.input ?? {}) as Record<string, unknown>), id }
+      $.clock.after(ASK_DELAY_MS, () => {
+        if (inFlight.has(id)) void startWaiting($, w)
+      })
+    }
+    return verdict
+  })
+
+  // Every call in flight (for the ask above), Claude's own question (amber
+  // while it waits for the answer), and the main agent's tool: what the crab
+  // in the corner acts out.
+  on('tool.call', async ($, e, next) => {
+    const id = e.tool_use_id
+    if (id) inFlight.add(id)
     try {
-      return await next(e)
+      if (e.tool === 'AskUserQuestion' && id) {
+        const qs = (e as unknown as { questions?: { question?: unknown }[] }).questions
+        const question = typeof qs?.[0]?.question === 'string' ? qs[0].question : ''
+        await startWaiting($, { kind: 'answer', tool: e.tool, detail: question, id })
+      }
+      if (e.agentId !== undefined || e.tool === 'Agent' || e.tool === TOOL || e.tool === STEP_TOOL) return await next(e)
+      await update($, activity, () => ({ id, kind: kindOf(e.tool), target: targetOf(e as unknown as Record<string, unknown>) }))
+      try {
+        return await next(e)
+      } finally {
+        await update($, activity, prev => (prev?.id === id ? null : prev))
+      }
     } finally {
-      await update($, activity, prev => (prev?.id === id ? null : prev))
+      if (id) {
+        inFlight.delete(id)
+        await update($, waitingA, w => (w?.id === id ? null : w))
+      }
     }
   })
 
@@ -1574,12 +1708,32 @@ const registerProgress: Register = on => {
       </Box>
     )
 
+    // Claude waiting on the person: an amber row above the rest, while it lasts.
+    const waiting = await read($, waitingA)
+    const waitText = waiting
+      ? [waiting.kind === 'answer' ? tr().waitAnswer : tr().waitPermission, waiting.kind === 'permission' ? [waiting.tool, waiting.detail].filter(Boolean).join(': ') : waiting.detail]
+          .filter(Boolean)
+          .join(' · ')
+      : ''
+    const waitRow = !waiting ? null : vector ? (
+      <ui.Svg key="savvy-wait" source={waitSvg(width, waitText)} alt={waitText} width={width} height={H} />
+    ) : (
+      <Text key="savvy-wait" color={WAIT} bold wrap="truncate-end">
+        ! {waitText}
+      </Text>
+    )
+    const t = await $.clock.now()
+    if (scene.mood !== mood) scene = { mood, at: t }
+
     if (f === null) {
+      if (waitRow) return above(waitRow)
       if (vector) {
         const { Svg } = ui
+        // At work the crab walks the free part of the row; asleep it keeps still.
+        const art = mood === 'sleep' ? moodSvg(width, mood, status) : walkSvg(width, mood, status, t - scene.at)
         return above(
           <Box flexDirection="row" alignItems="center" gap={1}>
-            <Svg source={moodSvg(width, mood, status)} alt={status} width={width} height={H} />
+            <Svg source={art} alt={status} width={width} height={H} />
             {crewButton}
           </Box>,
         )
@@ -1606,21 +1760,34 @@ const registerProgress: Register = on => {
       />
     )
 
+    // With a flow on, the amber row sits above the bar.
+    const withWait = (bar: RenderElement) =>
+      waitRow ? (
+        <Box flexDirection="column">
+          {waitRow}
+          {bar}
+        </Box>
+      ) : (
+        bar
+      )
+
     if (vector) {
       const { Svg } = ui
-      return above(
+      // A step just taken: the tag glides from where it was.
+      const glide = f.moved && t - f.moved.at < GLIDE_MS ? { p: f.moved.from, age: t - f.moved.at } : undefined
+      return above(withWait(
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(f, width, mood, (await read($, styleA)).desktop)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
+          <Svg source={rowSvg(f, width, mood, (await read($, styleA)).desktop, glide)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
           {crewButton}
           {dismiss}
         </Box>,
-      )
+      ))
     }
 
     const cols = e.props.bodyColumns
     const titleW = Math.max(8, Math.min(30, f.title.length + 2, Math.floor(cols / 3)))
     const barW = Math.max(6, Math.min(40, cols - titleW - 32))
-    return above(
+    return above(withWait(
       <Box flexDirection="row" gap={2}>
         <Box width={titleW} flexShrink={0}>
           <Text color={f.isFinished ? DONE : ACCENT}>● </Text>
@@ -1635,7 +1802,7 @@ const registerProgress: Register = on => {
         {crewButton}
         {dismiss}
       </Box>,
-    )
+    ))
   })
 }
 
@@ -1663,12 +1830,13 @@ const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
 const STYLE_PANE = 'crabhud-style'
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
-const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style) or its language (language)'
+const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language) or turn sounds on and off (sound)'
 
 const TEXT = {
   en: {
     hidden: 'HUD hidden. Use /crabhud on to show it again.',
     shown: 'HUD shown.',
+    sound: (isOn: boolean) => (isOn ? 'Sounds on: a chime when Claude waits for you and when it finishes.' : 'Sounds off.'),
     language: (name: string) => `HUD language: ${name}.`,
     style: (name: string) => `HUD style: ${name}.`,
     noStyle: (name: string, all: string) => `No style "${name}". Pick one of: ${all}.`,
@@ -1684,6 +1852,7 @@ const TEXT = {
   'pt-BR': {
     hidden: 'HUD escondido. Use /crabhud on para mostrar.',
     shown: 'HUD visível.',
+    sound: (isOn: boolean) => (isOn ? 'Sons ligados: um toque quando o Claude espera você e quando termina.' : 'Sons desligados.'),
     language: (name: string) => `Idioma do HUD: ${name}.`,
     style: (name: string) => `Estilo do HUD: ${name}.`,
     noStyle: (name: string, all: string) => `Não há o estilo "${name}". Escolha um destes: ${all}.`,
@@ -1863,10 +2032,31 @@ async function checkAlerts($: EngineInterface) {
   if (kept.join() !== alerted.join()) await update($, alertedA, () => kept)
 }
 
+// How fast each window fills: the readings of the last PACE_SPAN, per window,
+// started over when the window resets. A pace needs PACE_MIN of readings.
+const PACE_SPAN = 90 * 60000
+const PACE_MIN = 10 * 60000
+const paceLog = new Map<string, { at: number; percent: number }[]>()
+const paceResets = new Map<string, number | null>()
+function withPace(limits: readonly HudLimit[], at: number): HudLimit[] {
+  return limits.map(l => {
+    const sameWindow = paceResets.get(l.kind) === undefined || Math.abs((paceResets.get(l.kind) ?? 0) - (l.resetsAt ?? 0)) < 5 * 60000
+    const kept = sameWindow ? (paceLog.get(l.kind) ?? []).filter(s => s.at >= at - PACE_SPAN && s.at < at && s.percent <= l.percent) : []
+    const log = [...kept, { at, percent: l.percent }]
+    paceLog.set(l.kind, log)
+    paceResets.set(l.kind, l.resetsAt)
+    const first = log[0]
+    const span = first ? at - first.at : 0
+    const rate = first && span >= PACE_MIN ? Math.max(0, ((l.percent - first.percent) * 3600000) / span) : null
+    return { ...l, rate }
+  })
+}
+
 // A newer reading of the account's limits: show it and hand it to the
 // other chats through the shared file.
-async function publish($: EngineInterface, limits: HudLimit[]) {
-  const value: HudLimits = { limits, at: await $.clock.now() }
+async function publish($: EngineInterface, readings: HudLimit[]) {
+  const at = await $.clock.now()
+  const value: HudLimits = { limits: withPace(readings, at), at }
   await update($, limitsA, () => value)
   shared ??= await sharedPath($)
   if (shared === null) return
@@ -1903,7 +2093,7 @@ async function pullShared($: EngineInterface) {
   }
   const mine = await read($, limitsA)
   if (theirs && (!mine || theirs.at > mine.at)) {
-    const value = theirs
+    const value = { ...theirs, limits: withPace(theirs.limits, theirs.at) }
     await update($, limitsA, () => value)
     await checkAlerts($)
   }
@@ -2127,11 +2317,12 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
 async function hudStart($: EngineInterface): Promise<void> {
   await $.command.register({ name: 'crabhud', description: COMMAND })
 
-  const [savedExpanded, savedHidden, lang, savedStyle] = await Promise.all([
+  const [savedExpanded, savedHidden, lang, savedStyle, savedSound] = await Promise.all([
     $.store.get('expanded'),
     $.store.get('hidden'),
     loadLanguage($),
     $.store.get('style'),
+    $.store.get('sound'),
   ])
   if (typeof savedExpanded === 'boolean') await update($, expandedA, () => savedExpanded)
   const saved = (savedStyle ?? {}) as Partial<Record<keyof HudStyles, unknown>>
@@ -2140,6 +2331,7 @@ async function hudStart($: EngineInterface): Promise<void> {
     desktop: asStyle(saved.desktop) ?? DEFAULT_STYLES.desktop,
   }))
   if (typeof savedHidden === 'boolean') await update($, hiddenA, () => savedHidden)
+  if (typeof savedSound === 'boolean') await update($, soundA, () => savedSound)
   await update($, langA, () => lang)
 
   // What this chat already knows is a baseline, not news: the shared file
@@ -2148,7 +2340,9 @@ async function hudStart($: EngineInterface): Promise<void> {
   const u = await $.session.usage()
   await setChat($, toChat(u))
   ownLimits = JSON.stringify(u.rateLimits)
-  if (u.rateLimits.length > 0) await update($, limitsA, () => ({ limits: toLimits(u.rateLimits), at: 0 }))
+  // The first reading also starts the pace log.
+  const startedAt = await $.clock.now()
+  if (u.rateLimits.length > 0) await update($, limitsA, () => ({ limits: withPace(toLimits(u.rateLimits), startedAt), at: 0 }))
   await pullShared($)
 
   record = await findRecord($)
@@ -2333,6 +2527,13 @@ const registerHud: Register = on => {
       if (style === null) return { text: T.noStyle(value, STYLES.join(', ')) }
       await setStyle($, { terminal: style, desktop: style })
       return { text: T.style(STYLE_NAMES[style]) }
+    }
+    if (/^sounds?$/i.test(arg)) {
+      // `/crabhud sound on` or `off`; a bare `/crabhud sound` flips it.
+      const isOn = /^on$/i.test(value) ? true : /^off$/i.test(value) ? false : !(await read($, soundA))
+      await update($, soundA, () => isOn)
+      await $.store.set('sound', isOn)
+      return { text: TEXT[(await read($, langA)) ?? 'en'].sound(isOn) }
     }
     if (/^lang(uage)?$/i.test(arg)) {
       // `/crabhud language pt-BR` sets it; a bare `/crabhud language` asks again.

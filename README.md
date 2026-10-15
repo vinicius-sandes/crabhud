@@ -2,9 +2,10 @@
 
 A Claude Code mod that sits right above the prompt and beside the chat:
 
-- **The crab** shows what Claude is doing right now (sleeping, thinking, analyzing, working, coordinating).
+- **The crab** shows what Claude is doing right now (sleeping, thinking, analyzing, working, coordinating). In the desktop app, while Claude works it walks sideways through the free part of the row, a puff of smoke behind it, and stops to act out the task; asleep it keeps still, and beside the progress bar it sits in the corner.
+- **Waiting on you**: when Claude asks for a permission or asks you a question, the row turns amber until you answer.
 - **A progress bar** for long jobs: a title, the step in progress, stretches with their own colors, and a checklist in the panel. Skills and workflows feed it through the `mcp__crabhud__progress` tool; subagents report their own steps through `mcp__crabhud__step`.
-- **The HUD** under them: the selected **model** and **effort**, the chat's **context** and **cost**, and the account's **5-hour** and **7-day limits** with their reset times, shared across every chat.
+- **The HUD** under them: the selected **model** and **effort**, the chat's **context** and **cost**, and the account's **5-hour** and **7-day limits** with their reset times and how fast they fill (`+12%/h`, `+8%/day`), shared across every chat. The pace turns amber, and the expanded HUD says when the limit runs out, when that comes before its reset.
 - **The agents panel** (`/agents-info`): running, finished and planned subagents with model, effort, progress, context, cost and time, each with its own crab.
 - **`/savvy-flow`**: an orchestrated delivery flow. The session model plans, owns the design and reviews; five tiered worker agents (`savvy-fable`, `savvy-heavy`, `savvy-careful`, `savvy-medium`, `savvy-light`) implement. The flow drives the progress bar, and each worker reports its own steps to the panel.
 
@@ -94,6 +95,7 @@ To skip the question (for example, when setting up a machine from a script), set
 - `/crabhud off` hides the HUD, `/crabhud on` shows it again, `/crabhud` toggles it.
 - `/crabhud language` asks for the language again; `/crabhud language en` or `/crabhud language pt-BR` sets it directly.
 - `/crabhud style` opens the style picker; `/crabhud style pixel|segments|line|solid|dots|spark|classic` sets it directly.
+- `/crabhud sound on` plays a short chime when Claude waits for you and when it finishes; `/crabhud sound off` silences it (the default). The clips are the mod's own (`sounds/`); macOS plays them, a Windows or Linux terminal has no player and stays quiet.
 - `/agents-info` opens or closes the agents panel.
 - `/savvy-flow <task>` (`/crabhud:savvy-flow` when another skill has the same name) runs the orchestrated flow.
 
