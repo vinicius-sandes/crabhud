@@ -498,7 +498,7 @@ test('the context gauge measures against the autocompact window, and follows it'
 test('terminal, fresh install: no saved effort, no desktop record → not Ultracode', async ($, on) => {
   // A first run under CLAUDE_CONFIG_DIR: nothing saved, no app record on
   // Linux, and "Dynamic workflows" on by default; that switch is not Ultracode.
-  world(on, { CLAUDE_CONFIG_DIR: '/home/me/app/.apoio/claude' })
+  world(on, { CLAUDE_CONFIG_DIR: '/home/me/app/.work/claude' })
   on('config.list', () => ({ value: [{ key: 'workflows', label: 'Dynamic workflows', kind: 'boolean', value: true }] }) as any)
   // The model's own words may quote an /effort line: never read as one.
   let history: unknown[] = [
@@ -699,11 +699,11 @@ test('the Remote Control row draws the picked style too', async ($, on) => {
 // The flow as an orchestrator reports it: two groups, 5 of 14 steps done.
 const PROGRESS = {
   tool: 'mcp__crabhud__progress',
-  title: 'Roacutan e acne',
+  title: 'Projeto de exemplo',
   done: 5,
   groups: [
-    { name: 'base', steps: Array.from({ length: 8 }, (_, i) => `b${i}`) },
-    { name: 'intermediária', steps: Array.from({ length: 6 }, (_, i) => `i${i}`) },
+    { name: 'início', steps: Array.from({ length: 8 }, (_, i) => `b${i}`) },
+    { name: 'meio', steps: Array.from({ length: 6 }, (_, i) => `i${i}`) },
   ],
 }
 
@@ -713,7 +713,7 @@ const PANEL = {
   props: { title: 'Agents', isFocused: false, bodyColumns: 60, placement: 'side' },
 } as const
 
-const progressRow = async (ui: any) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Roacutan'))
+const progressRow = async (ui: any) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Projeto'))
 const allText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join('')
 
 test('the progress bar takes the app style in the app and the terminal style in the terminal', async ($, on) => {
@@ -751,7 +751,7 @@ test('every style draws the progress bar, unfinished and finished', async ($, on
       await app.unmount()
       const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
       const line = await allText(term)
-      expect(line).toContain('Roacutan')
+      expect(line).toContain('Projeto')
       expect(line).toContain(done === 14 ? '100%' : '36%')
       await term.unmount()
     }
@@ -898,4 +898,67 @@ test('a step forward makes the progress tag glide from where it was', async ($, 
   const later = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(String((await progressRow(later))?.props.source)).not.toContain('@keyframes bgp')
   await later.unmount()
+})
+
+// ---- Portraits from data: a crabhud-portraits.json in a folder under ~/.claude/mods/ ----
+
+const TEAM_PORTRAITS = JSON.stringify({
+  crabhud: 1,
+  groups: { preparo: '#E46FB0' },
+  portraits: {
+    barista: {
+      agents: ['barista-time'],
+      color: '#8B5A2B',
+      css: ['.la,.lb{animation:none}', '.cup{animation:blink 1s steps(1) infinite}', 'body{}</style><script>', '@import url(x)'],
+      pixels: [
+        [7, 10, 16, 12, '#D97757'],
+        [9, 12, 2, 2, '#1F1E1D'],
+        [7, 22, 2, 4, '#D97757', 'la'],
+        [22, 14, 4, 5, 'role', 'fr cup'],
+        [0, 0, 'x', 1, 'red'],
+      ],
+    },
+    fable: { agents: ['other-fable'], color: '#000000', pixels: [] },
+  },
+})
+
+async function teamCard($: any, on: any, files: Map<string, string>) {
+  world(on, {}, files)
+  panes(on)
+  on('agent.spawn', () => ({ agentId: 'agent-1', model: 'claude-opus-5-5' }) as any)
+  await start($, on)
+  await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'brew', description: 'Passar o café', subagentType: 'barista-time' } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
+  const card = (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Passar'))
+  const source = String(card?.props.source)
+  await ui.unmount()
+  return source
+}
+
+test('a portraits file under ~/.claude/mods dresses its agents; its bad parts are left out', async ($, on) => {
+  const source = await teamCard($, on, new Map([['/home/me/.claude/mods/meu-time/crabhud-portraits.json', TEAM_PORTRAITS]]))
+  expect(source).toContain('c-barista')
+  expect(source).toContain('#8B5A2B')
+  // Its motion, scoped to it; what could break out of the drawing never gets in.
+  expect(source).toContain('.c-barista.run .cup{animation:blink')
+  expect(source).not.toContain('<script>')
+  expect(source).not.toContain('@import')
+  // A costume of the mod's own is never replaced.
+  expect(source).not.toContain('#000000')
+})
+
+test('without a portraits file every agent wears the plain crab', async ($, on) => {
+  const source = await teamCard($, on, new Map())
+  expect(source).toContain('c-other')
+  expect(source).not.toContain('c-barista')
+})
+
+test("a portraits file's group colours colour the progress bar", async ($, on) => {
+  world(on, {}, new Map([['/home/me/.claude/mods/meu-time/crabhud-portraits.json', TEAM_PORTRAITS]]))
+  panes(on)
+  await start($, on)
+  await $.tool.call({ ...PROGRESS, groups: [{ name: 'Preparo', steps: ['a', 'b'] }, ...PROGRESS.groups] } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(String((await progressRow(ui))?.props.source)).toContain('#E46FB0')
+  await ui.unmount()
 })

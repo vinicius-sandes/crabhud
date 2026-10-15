@@ -6,6 +6,8 @@ import { BAR_CSS, GLIDE_MS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells,
 import type { Cell } from './bar-styles'
 import { hudSvg } from './hud-svg'
 import { CYCLE, CYCLE_S } from './hud-words'
+import { NO_PORTRAITS, mergePortraits, portraitFor, readPortraits } from './portraits'
+import type { PortraitSet } from './portraits'
 
 // crabhud: the crab and the progress bar on top of the band above the prompt, the HUD
 // under them, and the agents panel beside the chat. The engine follows $ only into
@@ -380,11 +382,10 @@ const fitText = (s: string, size: number, maxW: number): string => {
   return out + '…'
 }
 
-// A stretch of the bar per group (one per skill): base, intermediária, final keep their
-// colors whichever of them are called; anything else takes the next free color.
-const GROUP_COLOR: Record<string, string> = { base: '#3B7FF5', 'intermediária': '#A259E6', intermediaria: '#A259E6', final: '#F08C2E' }
+// A stretch of the bar per group: a group the data files name keeps its colour
+// whichever groups are called; any other takes the next colour of the palette.
 const GROUP_PALETTE = ['#3B7FF5', '#A259E6', '#F08C2E', '#D9649B', '#3FA7B5']
-const groupColor = (name: string, i: number): string => GROUP_COLOR[name.toLowerCase()] ?? GROUP_PALETTE[i % GROUP_PALETTE.length] ?? ACCENT
+const groupColor = (name: string, i: number): string => portraits.groups[name.toLowerCase()] ?? GROUP_PALETTE[i % GROUP_PALETTE.length] ?? ACCENT
 
 // The row is taller when the bar carries the groups' names under it.
 const rowHeight = (f: Flow): number => (f.groups.length ? 40 : H)
@@ -569,34 +570,13 @@ const TIER_COLOR: Record<string, string> = {
   other: '#888780',
 }
 
-// What each savvy tier runs on, for planned tasks that have no run yet.
-// Apoio's own agents (the apoio-edicao-base, apoio-edicao-intermediaria and apoio-edicao-final skills):
-// a costume and a color per role, matched by agent type.
-const ROLE_OF: Record<string, string> = {
-  'legendista-apoio': 'legendista',
-  'revisor-edicao-apoio': 'revisor',
-  'roteirista-apoio': 'roteirista',
-  'capa-apoio': 'capa',
-  'headlines-figma': 'headlines',
-  'conferente-apoio': 'conferente',
-  'curador-broll-apoio': 'curador',
-}
-
-const ROLE_COLOR: Record<string, string> = {
-  legendista: '#D4537E',
-  revisor: '#B83A3A',
-  roteirista: '#5E8C31',
-  capa: '#2B9FB3',
-  headlines: '#9B59B6',
-  conferente: '#3F7CAC',
-  curador: '#A0522D',
-}
-
 // A bar that shows the context rather than progress.
 const GREY = '#9a9a96'
 
-const colorOf = (tier: string): string => TIER_COLOR[tier] ?? ROLE_COLOR[tier] ?? '#888780'
+// A tier's colour, or a portrait's from the data files.
+const colorOf = (tier: string): string => TIER_COLOR[tier] ?? portraits.portraits[tier]?.color ?? '#888780'
 
+// What each savvy tier runs on, for planned tasks that have no run yet.
 const TIER_MODEL: Record<string, string> = {
   fable: 'Fable · high',
   heavy: 'Opus · xhigh',
@@ -719,7 +699,7 @@ const crabBody = (f: Fill, armFront = 0, armCls?: string): void => {
   f(21, 22, 2, 4, CLAY, 'lb')
 }
 
-// The body and legs alone, for a role that places its own claws; and the desk a role sits at.
+// The body and legs alone, for a costume that places its own claws.
 const crabTrunk = (f: Fill): void => {
   f(7, 10, 16, 12, CLAY)
   f(9, 12, 2, 2, INK)
@@ -728,11 +708,6 @@ const crabTrunk = (f: Fill): void => {
   f(17, 22, 2, 4, CLAY, 'la')
   f(11, 22, 2, 4, CLAY, 'lb')
   f(21, 22, 2, 4, CLAY, 'lb')
-}
-
-const desk = (f: Fill): void => {
-  f(0, 22, 30, 1, '#9C7A55', 'fr')
-  f(0, 23, 30, 2, '#7A5A3C', 'fr')
 }
 
 // A big magnifier held in front of the right eye, which shows through it zoomed in (a 4×4 eye
@@ -774,37 +749,49 @@ const CRAB_CSS = `<style>
 @keyframes wave{50%{transform:skewY(-12deg) scaleX(.85)}}
 .c-explore.run .it{transform-origin:50% 100%;animation:fence .5s ease-in-out infinite}
 @keyframes fence{50%{transform:rotate(25deg)}}
-.c-legendista.run .la,.c-legendista.run .lb,.c-revisor.run .la,.c-revisor.run .lb,.c-roteirista.run .la,.c-roteirista.run .lb,
-.c-capa.run .la,.c-capa.run .lb,.c-headlines.run .la,.c-headlines.run .lb,.c-conferente.run .la,.c-conferente.run .lb,
-.c-curador.run .la,.c-curador.run .lb{animation:none}
-.c-legendista.run .kl{animation:tap .25s steps(1) infinite}.c-legendista.run .kr{animation:tap .25s steps(1) infinite -.125s}
-@keyframes tap{50%{transform:translateY(-1px)}}
-.c-legendista.run .tx1{animation:blink 1s steps(1) infinite}.c-legendista.run .tx2{animation:blink 1s steps(1) infinite -.5s}
-.c-revisor.run .mk{animation:blink .5s steps(1) infinite}
-.c-roteirista.run .pn{animation:write 1s steps(1) infinite}
-.c-roteirista.run .ln{transform-origin:0 50%;animation:grow 1s steps(1) infinite}
-@keyframes write{0%{transform:translate(-8px,0)}12%{transform:translate(-7px,-1px)}25%{transform:translate(-6px,0)}37%{transform:translate(-5px,-1px)}50%{transform:translate(-4px,0)}62%{transform:translate(-3px,-1px)}75%{transform:translate(-2px,0)}87%{transform:translate(-1px,-1px)}100%{transform:translate(0,0)}}
-@keyframes grow{0%{transform:scaleX(.06)}12%{transform:scaleX(.125)}25%{transform:scaleX(.25)}37%{transform:scaleX(.375)}50%{transform:scaleX(.5)}62%{transform:scaleX(.625)}75%{transform:scaleX(.75)}87%{transform:scaleX(.875)}100%{transform:scaleX(1)}}
-.c-capa.run .fl{animation:flash 1s steps(1) infinite}@keyframes flash{0%,19%{opacity:1}20%,100%{opacity:0}}
-.c-headlines.run .br{animation:dip 1s ease-in-out infinite}
-@keyframes dip{0%,100%{transform:translate(1px,-3px)}45%,60%{transform:translate(-5px,3px)}}
-.c-conferente.run .k1{animation:c1 1s steps(1) infinite}.c-conferente.run .k2{animation:c2 1s steps(1) infinite}.c-conferente.run .k3{animation:c3 1s steps(1) infinite}
 @keyframes c1{0%,24%{opacity:0}25%,100%{opacity:1}}@keyframes c2{0%,49%{opacity:0}50%,100%{opacity:1}}@keyframes c3{0%,74%{opacity:0}75%,100%{opacity:1}}
-.c-curador.run .sp{animation:roll .5s steps(1) infinite}@keyframes roll{50%{transform:translateX(-1px)}}
-.c-curador.run .st{animation:press 1s ease-in-out infinite}@keyframes press{0%,30%,100%{transform:translateY(-1px)}45%,60%{transform:translateY(3px)}}
-.c-curador.run .ok,.c-curador.run .no{animation:c2 1s steps(1) infinite}
 .c-m-sleep.run .la,.c-m-sleep.run .lb,.c-m-sleep.run .bd,.c-m-think.run .la,.c-m-think.run .lb,.c-m-analyze.run .la,.c-m-analyze.run .lb,.c-m-delegate.run .la,.c-m-delegate.run .lb{animation:none}
 .c-m-sleep.run .bd{animation:breathe 2s ease-in-out infinite}@keyframes breathe{50%{transform:translateY(1px)}}
 .c-m-sleep.run .z1{animation:zz 2s ease-in infinite}.c-m-sleep.run .z2{animation:zz 2s ease-in infinite -1s}
 @keyframes zz{0%{transform:translate(0,3px);opacity:0}30%{opacity:1}100%{transform:translate(2px,-3px);opacity:0}}
 .c-m-think.run .d1{animation:c1 1s steps(1) infinite}.c-m-think.run .d2{animation:c2 1s steps(1) infinite}.c-m-think.run .d3{animation:c3 1s steps(1) infinite}
-.c-m-analyze.run .ey,.c-m-analyze.run .el,.c-revisor.run .ey,.c-revisor.run .el{transform-origin:center;animation:peek 2s steps(1) infinite}
+.c-m-analyze.run .ey,.c-m-analyze.run .el{transform-origin:center;animation:peek 2s steps(1) infinite}
 @keyframes peek{0%{transform:none}25%{transform:translateX(-1px)}50%{transform:translateX(1px)}75%{transform:none}85%{transform:scaleY(.25)}90%{transform:none}}
 .c-m-work.run .hm{transform-origin:0 100%;animation:hammer .4s ease-in infinite}@keyframes hammer{50%{transform:rotate(-40deg)}}
 .c-m-work.run .sp{animation:blink .4s steps(1) infinite}
 .c-m-delegate.run .w1{animation:blink .5s steps(1) infinite}.c-m-delegate.run .w2{animation:blink .5s steps(1) infinite -.25s}
 @media (prefers-reduced-motion: reduce){.run,.run g{animation:none!important}}
 </style>`
+
+// Portraits from data: each folder under ~/.claude/mods/ may hold a
+// crabhud-portraits.json (see hooks/portraits.ts), read once per session.
+const PORTRAITS_FILE = 'crabhud-portraits.json'
+let portraits: PortraitSet = NO_PORTRAITS
+const portraitCss = (): string => {
+  const css = Object.values(portraits.portraits).map(p => p.css).filter(Boolean).join('\n')
+  return css ? `<style>${css}</style>` : ''
+}
+
+async function loadPortraits($: EngineInterface): Promise<void> {
+  const [configDir, home, profile] = await Promise.all([$.env.get('CLAUDE_CONFIG_DIR'), $.env.get('HOME'), $.env.get('USERPROFILE')])
+  const base = (home || profile) && `${home || profile}/.claude`
+  const roots = [...new Set([configDir, base].filter((d): d is string => Boolean(d)).map(d => `${d.replace(/[\\/]+$/, '')}/mods`))]
+  let set = NO_PORTRAITS
+  const problems: string[] = []
+  for (const root of roots) {
+    const entries = await $.fs.list(root).catch(() => [])
+    for (const name of entries.filter(en => en.kind !== 'file').map(en => en.name).sort()) {
+      const path = `${root}/${name}/${PORTRAITS_FILE}`
+      const text = await $.fs.read(path).catch(() => null)
+      if (text === null) continue
+      const read = readPortraits(text, costume => costume in COSTUMES || costume in set.portraits)
+      set = mergePortraits(set, read.set)
+      problems.push(...read.problems.map(p => `${name}/${PORTRAITS_FILE}: ${p}`))
+    }
+  }
+  portraits = set
+  if (problems.length) $.ui.toast(`crabhud: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? ` (+${problems.length - 3})` : ''}`)
+}
 
 const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
   // Fable: astronaut in a glass dome; floats instead of walking, the antenna and the star blink.
@@ -850,113 +837,6 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
     f(7, 11, 11, 1, INK); f(18, 11, 4, 3, INK)
     f(27, 6, 1, 9, '#C9CCD2', 'it'); f(26, 15, 3, 1, '#7A4A26', 'it')
   },
-  // Apoio's roles act their job out: what they work on stands in front of them
-  // (a class with `fr` draws over the legs), and each wears its trade.
-  // Legendista: headphones and a hoodie; types the captions on the laptop beside him.
-  legendista: (f, t) => {
-    crabTrunk(f)
-    f(7, 16, 16, 6, t); f(12, 16, 1, 3, '#F8F6F1'); f(17, 16, 1, 3, '#F8F6F1')
-    f(8, 7, 14, 1, '#3A3A3C'); f(7, 8, 1, 2, '#3A3A3C'); f(22, 8, 1, 2, '#3A3A3C')
-    f(5, 10, 3, 4, '#3A3A3C'); f(22, 10, 3, 4, '#3A3A3C'); f(6, 11, 1, 2, t); f(23, 11, 1, 2, t)
-    desk(f)
-    f(23, 13, 7, 7, '#3A3A3C', 'fr'); f(24, 14, 5, 5, '#BFE3F5', 'fr')
-    f(24, 15, 4, 1, '#A83E62', 'fr tx1'); f(24, 17, 3, 1, '#A83E62', 'fr tx2')
-    f(11, 20, 19, 2, '#8E929A', 'fr')
-    for (let x = 12; x < 29; x += 2) f(x, 20, 1, 1, '#5A5A5C', 'fr')
-    f(13, 18, 4, 3, CLAY, 'fr kl'); f(18, 18, 4, 3, CLAY, 'fr kr')
-  },
-  // Revisor: shirt and tie at the desk; reads the screen through a big magnifier at his eye.
-  revisor: (f, t) => {
-    crabTrunk(f)
-    f(7, 16, 16, 6, '#F1EFEA'); f(12, 16, 2, 1, '#D2D1C8'); f(16, 16, 2, 1, '#D2D1C8'); f(14, 16, 2, 5, t)
-    desk(f)
-    f(0, 11, 8, 9, '#3A3A3C', 'fr'); f(1, 12, 6, 7, '#F4F3EE', 'fr')
-    f(2, 13, 4, 1, '#9A9A96', 'fr'); f(2, 15, 3, 1, '#9A9A96', 'fr'); f(2, 17, 4, 1, '#9A9A96', 'fr')
-    f(2, 16, 3, 1, t, 'fr mk'); f(3, 20, 2, 2, '#3A3A3C', 'fr')
-    f(8, 19, 4, 3, CLAY, 'fr')
-    magnifier(f)
-  },
-  // Roteirista: beret, scarf and a striped shirt; writes the script on the sheet in front of him.
-  roteirista: (f, t) => {
-    crabTrunk(f)
-    f(7, 16, 16, 6, '#2F3E5C'); for (const y of [16, 18, 20]) f(7, y, 16, 1, '#F8F6F1')
-    f(8, 15, 14, 1, t); f(10, 16, 2, 3, t)
-    stamp(f, 6, 5, ['.........s........', '....bbbbbbbbbb....', '..bbbbbbbbbbbbbb..', '.bbbbbbbbbbbbbbbbb', 'dddddddddddddddd..'], { s: '#466A24', b: t, d: '#466A24' })
-    desk(f)
-    f(6, 16, 15, 6, '#F8F6F1', 'fr')
-    f(8, 17, 10, 1, '#9A9A96', 'fr'); f(8, 19, 11, 1, '#9A9A96', 'fr')
-    f(8, 21, 8, 1, INK, 'fr ln')
-    f(3, 17, 4, 3, CLAY, 'fr')
-    f(18, 18, 3, 3, CLAY, 'fr pn')
-    f(16, 21, 1, 1, INK, 'fr pn'); f(17, 20, 1, 1, '#E8C9A0', 'fr pn')
-    for (let i = 0; i < 4; i++) f(18 + i, 19 - i, 1, 1, '#F5C542', 'fr pn')
-    f(22, 15, 1, 1, '#8E929A', 'fr pn'); f(23, 14, 1, 1, '#E88A9A', 'fr pn')
-  },
-  // Capa: photographer's vest and a cap worn backwards; looks through the camera and fires the flash.
-  capa: (f, t) => {
-    crabTrunk(f)
-    f(7, 16, 4, 6, '#A08A5C'); f(19, 16, 4, 6, '#A08A5C'); f(8, 18, 2, 2, '#8A7449'); f(20, 18, 2, 2, '#8A7449')
-    stamp(f, 7, 8, ['..cccccccccccc..', 'cccccccccccccccc'], { c: t }); f(3, 9, 4, 1, '#1E7887')
-    f(15, 8, 4, 1, '#3A3A3C'); f(13, 9, 12, 7, '#3A3A3C'); f(21, 7, 3, 2, '#E6E8EE')
-    stamp(f, 16, 10, ['.ggg.', 'gkkkg', 'gkkkg', 'gkkkg', '.ggg.'], { g: '#8E929A', k: INK })
-    f(17, 11, 1, 1, '#fff')
-    f(10, 14, 3, 3, CLAY); f(25, 11, 3, 4, CLAY)
-    f(21, 5, 3, 2, '#FFF7D6', 'fl'); f(22, 1, 1, 3, '#F5C542', 'fl')
-    f(17, 5, 3, 1, '#F5C542', 'fl'); f(25, 5, 3, 1, '#F5C542', 'fl')
-    f(19, 2, 1, 1, '#F5C542', 'fl'); f(25, 2, 1, 1, '#F5C542', 'fl')
-  },
-  // Headlines: a painter in beret and smock; holds the palette in front, dips the brush and raises it.
-  headlines: (f, t) => {
-    crabTrunk(f)
-    f(7, 15, 16, 7, '#F1EFEA')
-    f(9, 17, 1, 1, '#D0453F'); f(20, 16, 1, 1, '#378ADD'); f(18, 20, 1, 1, '#F5C542'); f(11, 20, 1, 1, t)
-    stamp(f, 6, 6, ['........s.........', '...bbbbbbbbbbbb...', '.bbbbbbbbbbbbbbbb.', 'bbbbbbbbbbbbbbbbbb', '..dddddddddddddd..'], { s: '#7A4192', b: t, d: '#7A4192' })
-    f(4, 17, 3, 3, CLAY)
-    stamp(f, 3, 15, ['..wwwwwwwww.', '.wwrwwywwwww', 'wwwwwwwwwbww', 'ww..wwwgwwww', 'wwwwwwwwwwww', '.wwwwwwwwww.', '...wwwwww...'],
-      { w: '#D9B382', r: '#D0453F', y: '#F5C542', b: '#378ADD', g: '#3B9C5F' }, 'pal')
-    f(23, 8, 4, 4, CLAY, 'br')
-    for (let i = 0; i < 3; i++) f(22 - i, 12 + i, 1, 1, '#7A4A26', 'br')
-    f(19, 15, 1, 1, '#8E929A', 'br'); f(18, 16, 1, 1, t, 'br'); f(17, 17, 1, 1, t, 'br')
-  },
-  // Conferente: glasses on; checks the table on his clipboard while the tasks above tick green.
-  conferente: (f, t) => {
-    crabTrunk(f)
-    for (const x of [8, 18]) {
-      f(x, 11, 4, 1, '#3A3A3C'); f(x, 14, 4, 1, '#3A3A3C'); f(x, 11, 1, 4, '#3A3A3C'); f(x + 3, 11, 1, 4, '#3A3A3C')
-    }
-    f(12, 12, 6, 1, '#3A3A3C')
-    f(7, 15, 16, 7, t)
-    f(8, 15, 14, 9, '#7A4A26', 'fr'); f(9, 16, 12, 7, '#F8F6F1', 'fr'); f(13, 14, 4, 2, '#8E929A', 'fr')
-    f(9, 18, 12, 1, '#D2D1C8', 'fr'); f(9, 20, 12, 1, '#D2D1C8', 'fr'); f(12, 16, 1, 7, '#D2D1C8', 'fr')
-    for (const [y, k] of [[16, 'k1'], [19, 'k2'], [21, 'k3']] as const) {
-      f(10, y, 1, 1, '#C9CCD2', 'fr'); f(10, y, 1, 1, '#3B9C5F', `fr ${k}`)
-      f(14, y, 5, 1, '#9A9A96', 'fr')
-    }
-    f(5, 17, 3, 3, CLAY, 'fr'); f(22, 17, 3, 3, CLAY, 'fr')
-    for (const [x, y, k] of [[0, 1, 'k1'], [11, 0, 'k2'], [22, 1, 'k3']] as const) {
-      f(x, y, 8, 4, '#F8F6F1'); f(x + 1, y + 1, 2, 2, '#C9CCD2'); f(x + 1, y + 1, 2, 2, '#3B9C5F', k)
-      f(x + 4, y + 1, 3, 1, '#9A9A96'); f(x + 4, y + 2, 2, 1, '#9A9A96')
-    }
-  },
-  // Curador: suit, bow tie and monocle; stamps the approved b-roll on the filmstrip while the rest go dark.
-  curador: (f, t) => {
-    crabTrunk(f)
-    f(7, 15, 16, 7, '#3A3A3C'); f(13, 15, 4, 7, '#F1EFEA')
-    stamp(f, 12, 14, ['bb..bb', 'bbbbbb', 'bb..bb'], { b: t }); f(14, 15, 2, 1, '#6B3419')
-    stamp(f, 18, 11, ['.gg.', 'g..g', 'g..g', '.gg.'], { g: '#D4AF37' }); f(19, 12, 1, 1, '#fff')
-    f(22, 14, 1, 1, '#D4AF37'); f(21, 15, 1, 1, '#D4AF37')
-    desk(f)
-    f(0, 18, 30, 5, '#2A2A2C', 'fr')
-    for (let x = 1; x < 30; x += 3) { f(x, 18, 1, 1, '#8E929A', 'fr sp'); f(x, 22, 1, 1, '#8E929A', 'fr sp') }
-    for (const [x, sky] of [[2, '#C9CCD2'], [11, '#E8A87C'], [20, '#8FC9E8']] as const) {
-      f(x, 19, 7, 2, sky, 'fr'); f(x, 21, 7, 1, '#5E9E4A', 'fr'); f(x + 5, 19, 1, 1, '#F5C542', 'fr')
-    }
-    f(2, 19, 7, 3, 'rgba(31,30,29,.65)', 'fr no'); f(11, 19, 7, 3, 'rgba(31,30,29,.65)', 'fr no')
-    f(19, 18, 9, 1, '#3B9C5F', 'fr ok'); f(19, 22, 9, 1, '#3B9C5F', 'fr ok'); f(19, 18, 1, 5, '#3B9C5F', 'fr ok'); f(27, 18, 1, 5, '#3B9C5F', 'fr ok')
-    f(4, 15, 3, 3, CLAY, 'fr')
-    f(23, 6, 4, 2, '#7A4A26', 'fr st'); f(24, 8, 2, 4, '#7A4A26', 'fr st'); f(22, 12, 6, 2, t, 'fr st'); f(22, 14, 6, 1, '#6B3419', 'fr st')
-    f(25, 9, 3, 3, CLAY, 'fr st')
-  },
   // The corner crab's moods. Sleeping: eyes shut, claws down, Zs drifting up.
   'm-sleep': f => {
     f(7, 10, 16, 12, CLAY); f(3, 17, 4, 4, CLAY); f(23, 17, 4, 4, CLAY)
@@ -1000,7 +880,7 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
 }
 
 const costumeOf = (type: string): string =>
-  type === 'Explore' ? 'explore' : (ROLE_OF[type.replace(/^[^:]*:/, '')] ?? tierOf(type))
+  type === 'Explore' ? 'explore' : (portraitFor(portraits, type) ?? tierOf(type))
 
 const CRAB_SCALE = 1.1
 
@@ -1012,7 +892,10 @@ const crab = (x: number, y: number, costume: string, dim = false, isWalking = fa
     if (!groups.has(cls)) groups.set(cls, [])
     groups.get(cls)?.push(`<rect x="${cx}" y="${cy}" width="${w}" height="${h}" fill="${c}"/>`)
   }
-  const draw = COSTUMES[costume] ?? ((g: Fill) => crabBody(g))
+  const own = portraits.portraits[costume]
+  const draw =
+    COSTUMES[costume] ??
+    (own ? (g: Fill, t: string) => own.pixels.forEach(([px, py, w, h, c, cls]) => g(px, py, w, h, c === 'role' ? t : c, cls)) : (g: Fill) => crabBody(g))
   draw(f, colorOf(costume))
   const group = (cls: string) => `<g class="${cls}">${(groups.get(cls) ?? []).join('')}</g>`
   const isFront = (k: string) => k.split(' ').includes('fr')
@@ -1030,7 +913,7 @@ const statusMark = (x: number, y: number, status: string, color: string): string
 }
 
 const svg = (W: number, H: number, body: string, attrs = ''): string =>
-  `<svg xmlns="http://www.w3.org/2000/svg"${attrs} width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}<style>${BAR_CSS}</style>${CRAB_CSS}${body}</svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg"${attrs} width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}<style>${BAR_CSS}</style>${CRAB_CSS}${portraitCss()}${body}</svg>`
 
 // The pane's own title already says "Agents": the header names the flow, if any.
 const headerSvg = (W: number, title: string, t: ReturnType<typeof totals>): string => {
@@ -1195,6 +1078,7 @@ async function autoOpen($: EngineInterface, key: string): Promise<void> {
 // The mod's register.tsx calls it (one session.start hook for the whole mod).
 async function progressStart($: EngineInterface, options: Parameters<Register>[1]): Promise<void> {
   lang = await detectLang($, options.language)
+  await loadPortraits($)
   await $.tool.register({
     name: 'progress',
     description:

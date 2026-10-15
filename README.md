@@ -47,6 +47,36 @@ When the context or a limit crosses 90%, you get a toast.
 
 crabhud brings together what used to be pixel-hud, a copy of savvy-progress and savvy-flow. Don't load any of them alongside it.
 
+## Portraits of your own agents
+
+In the agents panel the savvy workers and Explore wear costumes of their own; any other agent is the plain crab. To dress your team's agents, put a `crabhud-portraits.json` in a folder under `~/.claude/mods/` (a repository of your team's, say). crabhud reads every one it finds there when a chat opens:
+
+```json
+{
+  "crabhud": 1,
+  "groups": { "prep": "#E46FB0" },
+  "portraits": {
+    "barista": {
+      "agents": ["barista-team"],
+      "color": "#8B5A2B",
+      "pixels": [
+        [7, 10, 16, 12, "#D97757"],
+        [7, 22, 2, 4, "#D97757", "la"],
+        [22, 14, 4, 5, "role", "fr cup"]
+      ],
+      "css": [".la,.lb{animation:none}", ".cup{animation:blink 1s steps(1) infinite}"]
+    }
+  }
+}
+```
+
+- `agents`: the agent types it dresses, as the Agent tool names them. `color`: the agent's colour in the panel.
+- `pixels`: the crab on its 30×26 grid, one rectangle each (`x, y, width, height, colour, class`). `role` paints in the agent's colour. The classes `la` and `lb` are the legs (they step while it runs), `fr` draws in front of them, and any other class names a part for `css` to move.
+- `css`: its motion while it runs. Each rule is scoped to the portrait (`.cup{…}` moves only its `cup`), and `@keyframes` of its own are welcome; crabhud's `blink`, `c1`–`c3` and `peek` are there to use.
+- `groups`: a progress bar group's colour by its name, kept whichever groups a skill calls.
+
+A name the mod already uses (the tiers, `explore`) can't be replaced, and what doesn't hold (a colour that isn't one, a rule that could reach outside the drawing) is left out; crabhud says so once when the chat opens.
+
 ## Remote Control
 
 Following a chat through Remote Control (from the phone or another computer), the HUD shows a still version of the compact row, marked **⇄ Remote Control: ON**: the same model, effort, context, limits and cost, in the same colours, refreshed with every new reading, without the animations (each frame would have to cross the connection). The computer running the chat keeps the full HUD. The mod only needs to be installed on that computer.
