@@ -30,7 +30,7 @@ export type HudLimits = {
 
 export type HudLang = 'en' | 'pt-BR'
 
-/** How the bars look (`/crabhud style`), after claude-deck's six, plus pixel-hud's classic blocks. */
+/** How the bars look (`/crabhud style`): six drawn styles and the classic text blocks. */
 export type HudStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark' | 'classic'
 
 /** The style picked on each surface: the desktop app and the terminal keep their own. */
@@ -88,6 +88,18 @@ export type Flow = {
   groups: StepGroup[]
   /** The last step forward: the percent before it and when it came, so the tag glides from there. */
   moved?: { from: number; at: number }
+  /** Who drives the bar: the progress tool (a skill, /savvy-flow), Claude's own task list, or an approved plan. */
+  source?: 'tool' | 'todo' | 'plan'
+  /** When it reached 100%, for the crab's celebration. */
+  doneAt?: number
+}
+
+/** The main agent's current turn: since when, and how many tools it has called. */
+export type TurnStats = {
+  startedAt: number
+  actions: number
+  /** Set when the turn ended. */
+  endedAt?: number
 }
 
 export type AgentStatus = 'running' | 'done' | 'failed'
@@ -162,6 +174,11 @@ declare module 'claude-code' {
       waiting: Waiting | null
       /** Sounds on (`/crabhud sound on`); off by default. */
       sound: boolean
+      turn: TurnStats | null
+      /** What the chats on this machine spent, by day (YYYY-MM-DD, local). */
+      spend: Record<string, number>
+      /** `/crabhud demo` on until this time (ms), else 0. */
+      demo: number
     }
   }
 }

@@ -16,8 +16,10 @@ const xml = (s: string): string => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<
 const charEm = (ch: string): number => (/[\s.,:;'|!il1()[\]/↻]/.test(ch) ? 0.3 : /[A-ZmMw%$—]/.test(ch) ? 0.72 : 0.56)
 const textWidth = (s: string, size: number, bold = false): number => [...s].reduce((w, ch) => w + charEm(ch) * size, 0) * (bold ? 1.06 : 1)
 
-const CSS = `.t{fill:#1f1f1f}.m{fill:#6f6d67}.sep{fill:#c9c7c0}
-@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.sep{fill:#4a4a47}}
+const CSS = `.t{fill:#1f1f1f}.m{fill:#6f6d67}.sep{fill:#c9c7c0}.rt{stroke:#dedbd2}.rg{stroke:#fff}
+@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.sep{fill:#4a4a47}.rt{stroke:#3d3c39}.rg{stroke:#fff}}
+.rb{animation:rb 2.6s ease-in-out infinite}@keyframes rb{50%{opacity:.72}}
+@media (prefers-reduced-motion: reduce){.rb,.rs{animation:none}.rs{opacity:0}}
 .spin{transform-box:fill-box;transform-origin:center;animation:hs 1.4s linear infinite}@keyframes hs{to{transform:rotate(360deg)}}
 .uw{animation:uw 7s linear infinite}@keyframes uw{from{transform:translateX(-50%)}to{transform:translateX(0)}}
 @media (prefers-reduced-motion: reduce){.spin,.uw{animation:none}}`
@@ -78,6 +80,33 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
     const c = tone(v ?? 0, base)
     return ultra && (v ?? 0) < 90 ? { colorAt: ultraAt, head: ULTRA[ULTRA.length - 1] ?? c } : { colorAt: () => c, head: c }
   }
+  // A reading as a ring: the track, the arc of the reading in its colour (or
+  // Ultracode's gradient) that breathes, and a glint running along the arc,
+  // quicker while Claude works.
+  const RING = 16
+  const ring = (x: number, v: number | null, base: string): string => {
+    const id = uid()
+    const R = 6
+    const C = 2 * Math.PI * R
+    const frac = Math.max(0, Math.min(1, (v ?? 0) / 100))
+    const len = frac * C
+    const c = colors(v, base)
+    const cx = x + RING / 2
+    const cy = 13
+    let stroke = c.head
+    let defs = ''
+    if (ultra && (v ?? 0) < 90) {
+      defs = `<defs><linearGradient id="g${id}" x1="0" x2="1" y1="0" y2="1">${ULTRA.map((u, i) => `<stop offset="${i / (ULTRA.length - 1)}" stop-color="${u}"/>`).join('')}</linearGradient></defs>`
+      stroke = `url(#g${id})`
+    }
+    const speed = p.working ? 1.3 : 3.2
+    const arc = len > 0.5
+      ? `<circle class="rb" cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${stroke}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="${len.toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>
+<style>.rs${id}{animation:rs${id} ${speed}s linear infinite}@keyframes rs${id}{from{stroke-dashoffset:0}to{stroke-dashoffset:${(-Math.max(0, len - 1.6)).toFixed(2)}}}</style>
+<circle class="rg rs rs${id}" cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke-width="2.6" stroke-linecap="round" stroke-opacity=".75" stroke-dasharray="1.6 ${C.toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`
+      : ''
+    return `${defs}<circle class="rt" cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke-width="2.6"/>${arc}`
+  }
   // Ultracode's wave: a dot grid behind everything, lit by a band of light that drifts across.
   const wave = (H: number) => {
     if (!ultra) return ''
@@ -96,11 +125,12 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
     `<svg xmlns="http://www.w3.org/2000/svg" data-hud="1" data-style="${p.style}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>${CSS}${BAR_CSS}</style>${wave(H)}${body}</svg>`
 
   if (!open) {
-    // Closed: shrink the bars first, then drop the reset times, the effort,
-    // the bars and at last the model, so the cost at the right never gets cut.
+    // Closed: a ring per reading (they take less room than bars); drop the
+    // reset times, the effort, the rings and at last the model, so the cost at
+    // the right never gets cut.
     const H = 26
     const y = 17
-    const layout = (barW: number, resets: boolean, head: boolean, model = true) => {
+    const layout = (rings: boolean, resets: boolean, head: boolean, model = true) => {
       const parts: string[] = []
       let x = 0
       const put = (s: string, o: { cls?: string; bold?: boolean; fill?: string } = {}) => {
@@ -121,9 +151,9 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
       }
       const mini = (label: string, v: number | null, base: string, reset: string, l?: Lim) => {
         put(label, { cls: 'm' })
-        if (barW > 0) {
-          parts.push(barSvg({ style: p.style, x, y: 8, w: barW, h: 10, p: v ?? 0, ...colors(v, base), live: p.working, uid: uid() }))
-          x += barW + 7
+        if (rings) {
+          parts.push(ring(x - 2, v, base))
+          x += RING + 3
         }
         put(pctText(v), { cls: 't', bold: true })
         if (resets && reset) put(`↻ ${reset}`, { cls: 'm' })
@@ -140,15 +170,13 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
       put(cost, { cls: 't', bold: true })
       return { parts, width: x - 7 }
     }
-    let best = layout(0, false, false)
-    if (best.width > W) best = layout(0, false, false, false)
-    search: for (const [resets, head] of [[true, true], [false, true], [false, false]] as const) {
-      for (let barW = 76; barW >= 28; barW -= 8) {
-        const l = layout(barW, resets, head)
-        if (l.width <= W) {
-          best = l
-          break search
-        }
+    let best = layout(false, false, false)
+    if (best.width > W) best = layout(false, false, false, false)
+    for (const [rings, resets, head] of [[true, true, true], [true, false, true], [true, false, false]] as const) {
+      const l = layout(rings, resets, head)
+      if (l.width <= W) {
+        best = l
+        break
       }
     }
     const alt = [
@@ -181,7 +209,7 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
     parts.push(
       `<circle cx="6" cy="${y + 11}" r="4" fill="${ultra && (v ?? 0) < 90 ? ultraAt(i / (rows + 1)) : c}"/>`,
       T(L, y + 15, label, { cls: 'm' }),
-      barSvg({ style: p.style, x: BX, y: y + 3, w: BW, h: 16, p: v ?? 0, ...colors(v, base), live: p.working, uid: uid(), label: pctText(v) }),
+      barSvg({ style: p.style, x: BX, y: y + 3, w: BW, h: 16, p: v ?? 0, ...colors(v, base), live: true, uid: uid(), label: pctText(v) }),
       warn
         ? `<text x="${BX + BW + 14}" y="${y + 15}" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums"><tspan class="m">${xml(detail)} · </tspan><tspan fill="${AMBER}" font-weight="600">${xml(warn)}</tspan></text>`
         : T(BX + BW + 14, y + 15, detail, { cls: 'm' }),

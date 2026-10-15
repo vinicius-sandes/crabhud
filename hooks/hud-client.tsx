@@ -263,12 +263,14 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
   }
 
   if (!st.open) {
-    // Compact: groups spaced by margins (the desktop collapses spaces). Shrink
-    // the bars first, then drop the reset times, then the effort, so the cost
-    // at the right never gets cut.
+    // Compact: groups spaced by margins (the desktop collapses spaces). A ring
+    // per reading (○ ◔ ◑ ◕ ●) in its colour; drop the reset times, then the
+    // effort, then the rings, so the cost at the right never gets cut.
+    const pie = (v: number | null) => (v === null || v < 12.5 ? '○' : v < 37.5 ? '◔' : v < 62.5 ? '◑' : v < 87.5 ? '◕' : '●')
+    const ring = (v: number | null, base: string): Piece => ({ seg: { t: pie(v), c: theme ? flowAt(theme, v ?? 0, 0, st.frame) : tone(v ?? 0, base) } })
     const limit = (label: string, l: (HudLimit & { isReset?: boolean }) | undefined, n: number, withReset: boolean): Piece[] => [
       { seg: { t: label, dim: true } },
-      ...(n > 0 ? [{ bar: { p: l?.percent ?? null, n, base: GREEN } }] : []),
+      ...(n > 0 ? [ring(l?.percent ?? null, GREEN)] : []),
       { seg: { t: pctText(l?.percent ?? null), bold: true } },
       ...(withReset && l?.resetsAt != null ? [{ seg: { t: `↻ ${fmtLeft(l.resetsAt - now, true, W.now)}`, dim: true } }] : []),
       ...(withReset && pace(l, now, W, true).rate
@@ -288,7 +290,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       [{ el: statusEl, w: statusW }, { seg: { t: props.model, bold: true } }, ...(head ? [{ el: effort, w: ultra || (theme && !desktop) ? effortText.length + 1 : est(effortText) }] : [])],
       [
         { seg: { t: 'ctx', dim: true } },
-        ...(n > 0 ? [{ bar: { p: ctxP, n, base: PURPLE } }] : []),
+        ...(n > 0 ? [ring(ctxP, PURPLE)] : []),
         { seg: { t: pctText(ctxP), bold: true } },
       ],
       limit('5h', five, n, resets),
@@ -304,13 +306,11 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       )
     const room = cols - 3 // the ▾ at the right edge
     let groups = build(0, false, false)
-    search: for (const [resets, head, min] of [[true, true, 5], [false, true, 4], [false, false, 4], [false, false, 0]] as const) {
-      for (let n = 12; n >= min; n--) {
-        const candidate = build(n, resets, head)
-        if (width(candidate) <= room) {
-          groups = candidate
-          break search
-        }
+    for (const [resets, head, n] of [[true, true, 1], [false, true, 1], [false, false, 1], [false, false, 0]] as const) {
+      const candidate = build(n, resets, head)
+      if (width(candidate) <= room) {
+        groups = candidate
+        break
       }
     }
     const draw = (p: Piece) =>

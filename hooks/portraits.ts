@@ -7,7 +7,7 @@
 export type PortraitPixel = [number, number, number, number, string, string?]
 
 export type Portrait = {
-  /** The agent types it dresses, as the Agent tool names them (`legendista-apoio`). */
+  /** The agent types it dresses, as the Agent tool names them (`barista-team`). */
   agents: string[]
   color: string
   pixels: PortraitPixel[]

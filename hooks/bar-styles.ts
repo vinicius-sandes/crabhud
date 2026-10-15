@@ -1,4 +1,4 @@
-// The bar styles (/crabhud style), after claude-deck's (`/deck style`), for every
+// The bar styles (/crabhud style; credits in THIRD_PARTY_NOTICES.md), for every
 // bar crabhud draws: the progress bar, the HUD's gauges and the agents panel.
 // `barSvg` draws one as SVG (the desktop and the remote surfaces), `barCells`
 // as text cells (the terminal). Pure, no `$`.
@@ -31,7 +31,7 @@ export const STYLE_HINTS: Record<'en' | 'pt-BR', Record<BarStyle, string>> = {
     solid: 'a filled bar with a light sweep',
     dots: 'a dot per step',
     spark: 'a meter that rises as it fills',
-    classic: "pixel-hud's blocks: █ ▓ ▒ then dots",
+    classic: 'solid blocks: █ ▓ ▒ then dots',
   },
   'pt-BR': {
     pixel: 'régua arredondada, pontinhos que brilham, a % numa etiqueta',
@@ -40,7 +40,7 @@ export const STYLE_HINTS: Record<'en' | 'pt-BR', Record<BarStyle, string>> = {
     solid: 'barra cheia com um brilho que passa',
     dots: 'um ponto por etapa',
     spark: 'medidor que sobe conforme enche',
-    classic: 'os blocos do pixel-hud: █ ▓ ▒ e pontos depois',
+    classic: 'blocos cheios: █ ▓ ▒ e pontos depois',
   },
 }
 
@@ -190,7 +190,7 @@ export function barSvg(b: BarSvgInput): string {
       break
     }
     case 'classic': {
-      // pixel-hud's blocks: solid up to the fill, a dithered edge (▓ ▒), a dot per empty cell.
+      // Blocks: solid up to the fill, a dithered edge (▓ ▒), a dot per empty cell.
       const cw = Math.max(3, Math.round(h * 0.55))
       const n = Math.max(4, Math.floor(w / cw))
       const filled = Math.round((p / 100) * n)
@@ -326,7 +326,7 @@ export function barCells(style: BarStyle, p: number | null, n: number, colorAt: 
       }
       return out
     case 'classic': {
-      // pixel-hud's: solid up to the fill, its edge dithered (two steps once
+      // Blocks: solid up to the fill, its edge dithered (two steps once
       // the fill is long enough, one on a short one), dots after.
       const fade = filled < n ? (filled >= 4 ? 2 : filled >= 2 ? 1 : 0) : 0
       for (let i = 0; i < n; i++) {
