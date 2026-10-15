@@ -12,22 +12,30 @@ A Claude Code mod that sits right above the prompt and beside the chat:
 ✓ Opus 5.5  High   │   ctx ███▒····· 31%   │   5h ██▒······ 20%  ↻ 2h39m   │   7d █████▓▒·· 58%  ↻ 1d6h   │   $4.32   ▾
 ```
 
-Click anywhere on the HUD to switch between **compact** (one line) and **expanded** (longer bars, token counts, full reset times). Your choice is remembered.
+Switch the HUD between **compact** (one line) and **expanded** (one row per reading, with token counts and full reset times): in the desktop app with the ▾/▴ button beside it, in the terminal by clicking anywhere on it. Your choice is remembered.
 
 ## Styles
 
-Pick how the HUD's bars look with `/hud style`: a picker with a live preview of each one (keys 1–6). The desktop app and the terminal each keep their own pick; `/hud style <name>` sets both at once.
+Seven styles for every bar crabhud draws: the progress bar, the HUD's gauges and the bars in the agents panel. Pick one with `/crabhud style`: a picker with a live preview of each (keys 1–7). The desktop app and the terminal each keep their own pick; `/crabhud style <name>` sets both at once.
+
+In the desktop app the bars are drawn shapes: a rounded track with the fill inside it and, on the bigger bars, a tag with the count or the percentage. In the terminal they are text:
 
 ```
-Pixel     ctx █▒······ 31%  │  5h █▒······ 20%  │  7d ███▓▒··· 58%
+Pixel     ctx ⣦⣿⣀⣀⣀⣀⣀⣀ 31%  │  5h ⣦⣿⣀⣀⣀⣀⣀⣀ 20%  │  7d ⣤⣦⣶⣿⣿⣀⣀⣀ 58%
 Segments  ctx ▰▰▱▱▱▱▱▱ 31%  │  5h ▰▰▱▱▱▱▱▱ 20%  │  7d ▰▰▰▰▰▱▱▱ 58%
 Line      ctx ━━╸───── 31%  │  5h ━━╸───── 20%  │  7d ━━━━━╸── 58%
 Solid     ctx ██░░░░░░ 31%  │  5h ██░░░░░░ 20%  │  7d █████░░░ 58%
 Dots      ctx ● ○ ○ ○  31%  │  5h ◐ ○ ○ ○  20%  │  7d ● ● ○ ○  58%
-Spark     ctx ▂▃▁▁▁▁▁▁ 31%  │  5h ▂▃▁▁▁▁▁▁ 20%  │  7d ▂▃▄▅▆▁▁▁ 58%
+Spark     ctx ▅█▁▁▁▁▁▁ 31%  │  5h ▅█▁▁▁▁▁▁ 20%  │  7d ▃▄▅▆█▁▁▁ 58%
+Classic   ctx █▒······ 31%  │  5h █▒······ 20%  │  7d ███▓▒··· 58%
 ```
 
-**Solid** is a filled bar of colour (drawn above with █ and ░). While Claude works, the heads of segments, line, dots and spark blink, and a light sweeps along solid. **Pixel** is the default. The Remote Control row draws the same style, without the animation.
+- **Pixel**: pixels that thicken toward the head and twinkle (braille dots in the terminal).
+- **Segments**: a block per step. **Dots**: a dot per step. Both count the real steps of the progress bar when they fit.
+- **Line**: a thin line with a glowing head. **Solid**: a filled bar with a light that sweeps along it while Claude works (drawn above with █ and ░). **Spark**: a meter that rises as it fills.
+- **Classic**: pixel-hud's blocks, █ ▓ ▒ and dots after.
+
+The defaults are **Pixel** in the desktop app and **Classic** in the terminal. While Claude works the heads pulse. The Remote Control row draws the same style, without the animation.
 
 The loudest settings get their own look, following each surface's own effort picker:
 
@@ -73,7 +81,7 @@ To update: `git -C ~/.claude/mods/crabhud pull`, then open a new chat.
 
 ## Language
 
-The HUD speaks English by default and also Brazilian Portuguese. The first time it appears, it asks which one you want, once. Your pick is kept for every chat on that machine. Change it anytime with `/hud language`.
+The HUD speaks English by default and also Brazilian Portuguese. The first time it appears, it asks which one you want, once. Your pick is kept for every chat on that machine. Change it anytime with `/crabhud language`.
 
 To skip the question (for example, when setting up a machine from a script), set it in `~/.claude/settings.json`:
 
@@ -83,15 +91,15 @@ To skip the question (for example, when setting up a machine from a script), set
 
 ## Commands
 
-- `/hud off` hides the HUD, `/hud on` shows it again, `/hud` toggles it.
-- `/hud language` asks for the language again; `/hud language en` or `/hud language pt-BR` sets it directly.
-- `/hud style` opens the style picker; `/hud style pixel|segments|line|solid|dots|spark` sets it directly.
+- `/crabhud off` hides the HUD, `/crabhud on` shows it again, `/crabhud` toggles it.
+- `/crabhud language` asks for the language again; `/crabhud language en` or `/crabhud language pt-BR` sets it directly.
+- `/crabhud style` opens the style picker; `/crabhud style pixel|segments|line|solid|dots|spark|classic` sets it directly.
 - `/agents-info` opens or closes the agents panel.
 - `/savvy-flow <task>` (`/crabhud:savvy-flow` when another skill has the same name) runs the orchestrated flow.
 
 ## Cost
 
-The HUD never calls the model and adds nothing to what is sent to Claude: it spends no tokens and does not touch your limits. It only uses a little of your own machine: a file check every quarter second (the chat's settings and the shared limits), a local usage read every second, and redraws while Claude is working or Ultracode is on.
+The HUD never calls the model and adds nothing to what is sent to Claude: it spends no tokens and does not touch your limits. It only uses a little of your own machine: a file check every quarter second (the chat's settings and the shared limits), a local usage read every second, redraws while Claude is working or Ultracode is on, and in the desktop app a redraw every 30 seconds for the reset countdowns (its animations run in the drawing itself).
 
 ## Privacy
 
