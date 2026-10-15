@@ -28,8 +28,8 @@ export type HudLimits = {
 
 export type HudLang = 'en' | 'pt-BR'
 
-/** How the HUD's bars look (`/hud style`), after claude-deck's six. */
-export type HudStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark'
+/** How the bars look (`/crabhud style`), after claude-deck's six, plus pixel-hud's classic blocks. */
+export type HudStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark' | 'classic'
 
 /** The style picked on each surface: the desktop app and the terminal keep their own. */
 export type HudStyles = { terminal: HudStyle; desktop: HudStyle }

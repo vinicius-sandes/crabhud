@@ -98,7 +98,10 @@ async function start($: any, on: any, usage: (e: any) => unknown = () => ({ star
 
 test('desktop bars fill in proportion to the percentage', async ($, on) => {
   world(on)
+  panes(on)
   await start($, on)
+  // Classic's blocks: one glyph per cell, filled or not.
+  await $.command.run({ command: 'hud', args: 'style classic' } as any)
   await $.session.measure(measure)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await ui.resize({ columns: 100, rows: 4, in: 'hud' })
@@ -192,6 +195,7 @@ test('ultracode shimmers behind the band and stays readable', async ($, on) => {
     sessionSettings: { ultracode: true },
   }))
   world(on, { APPDATA: 'C:/fake' }, files)
+  panes(on)
   await start($, on)
   await $.session.measure(measure)
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -207,7 +211,7 @@ test('ultracode shimmers behind the band and stays readable', async ($, on) => {
     // The bars take the Ultracode palette: several colours, and they flow.
     const barColors = async () =>
       (await ui.findAll({ type: 'Text', in: 'hud' }))
-        .filter((t: any) => /^[█▓▒]+$/.test(t.text) && t.props.color)
+        .filter((t: any) => /^[█▓▒⣁-⣿]+$/.test(t.text) && t.props.color)
         .map((t: any) => String(t.props.color))
     const c1 = await barColors()
     await ui.advance(400)
@@ -526,7 +530,7 @@ function panes(on: any, opened: any[] = []) {
 }
 
 async function barGlyphs(ui: any): Promise<string> {
-  return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇ ]/g, '')
+  return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇⣀-⣿ ]/g, '')
 }
 
 test('/hud style <name> sets the bars on every surface and keeps the pick', async ($, on) => {
@@ -569,7 +573,7 @@ test('a saved style comes back with the next session', async ($, on) => {
   await desk.unmount()
 })
 
-test('/hud style opens the picker: six live previews, a key each, the pick per surface', async ($, on) => {
+test('/hud style opens the picker: seven live previews, a key each, the pick per surface', async ($, on) => {
   world(on)
   const opened = panes(on)
   await start($, on)
@@ -579,23 +583,24 @@ test('/hud style opens the picker: six live previews, a key each, the pick per s
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'crabhud', surface, ...PICKER } as any)
     const previews = await ui.findAll({ type: 'Client' })
-    expect(previews).toHaveLength(6)
-    expect(previews.map((c: any) => c.props.props.style)).toEqual(['pixel', 'segments', 'line', 'solid', 'dots', 'spark'])
+    expect(previews).toHaveLength(7)
+    expect(previews.map((c: any) => c.props.props.style)).toEqual(['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic'])
     const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
     expect(words).toContain('← now')
-    expect(words).toContain('Press 1/2/3/4/5/6')
+    expect(words).toContain('Press 1/2/3/4/5/6/7')
     // Key 5, Dots: for this surface only.
     await ui.press({ key: 'style-dots' })
     await ui.unmount()
-    // Dots now on the surface the key was pressed on; the desktop keeps
-    // pixel until its own pick.
+    // Dots now on the surface the key was pressed on; the other keeps its
+    // default (classic's blocks in the terminal, pixel's braille on the
+    // desktop) until its own pick.
     for (const where of ['terminal', 'desktop'] as const) {
       const band = await $.ui.mount({ plugin: 'crabhud', surface: where, ...BAND } as any)
       await band.resize({ columns: 120, rows: 1, in: 'hud' })
       const g = await barGlyphs(band)
       const picked = where === 'terminal' || surface === 'desktop'
       expect(g.includes('●')).toBe(picked)
-      expect(g.includes('█')).toBe(!picked)
+      expect(/[█⣀-⣿]/.test(g)).toBe(!picked)
       await band.unmount()
     }
   }
@@ -605,7 +610,7 @@ test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => 
   world(on)
   panes(on)
   await start($, on)
-  for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark']) {
+  for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic']) {
     await $.command.run({ command: 'hud', args: `style ${style}` } as any)
     for (const surface of ['terminal', 'desktop'] as const) {
       for (const pct of [0, 64, 100]) {

@@ -1,7 +1,7 @@
 import type { ClientModule, RenderElement } from 'claude-code'
 
 import type { HudLimit, HudProps } from '../types'
-import { barCells, mergeCells } from './hud-bars'
+import { barCells, mergeCells } from './bar-styles'
 
 type State = { open: boolean; frame: number; refresh: number }
 type Seg = { t: string; c?: string; dim?: boolean; bold?: boolean }

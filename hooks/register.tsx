@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput, SessionRateLimit, SessionUsage, ToolCallInput, TurnStepResult } from 'claude-code'
 
 import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup } from '../types'
-import { STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, mergeCells } from './hud-bars'
+import { BAR_CSS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
+import type { Cell } from './bar-styles'
 
 // crabhud: the crab and the progress bar on top of the band above the prompt, the HUD
 // under them, and the agents panel beside the chat. The engine follows $ only into
@@ -356,7 +357,7 @@ const groupColor = (name: string, i: number): string => GROUP_COLOR[name.toLower
 // The row is taller when the bar carries the groups' names under it.
 const rowHeight = (f: Flow): number => (f.groups.length ? 40 : H)
 
-const rowSvg = (f: Flow, W: number, mood: Mood): string => {
+const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle): string => {
   const RH = rowHeight(f)
   // The title takes what it needs, up to 40% of the row; the bar takes the rest.
   const title = fitText(f.title, 13, Math.max(60, W * 0.4))
@@ -364,19 +365,17 @@ const rowSvg = (f: Flow, W: number, mood: Mood): string => {
   const BAR_W = Math.max(60, W - BAR_X - 46 - CRAB_W)
   const y0 = f.groups.length ? 3 : (H - BAR_H) / 2
   const mid = y0 + BAR_H / 2
-  const fillW = Math.round(BAR_W * ratio(f))
-  const runW = f.total ? Math.round((BAR_W * Math.min(f.total, f.done + f.running)) / f.total) : 0
 
-  // Where each group starts and ends on the bar, and which one is in progress.
-  const spans: { name: string; color: string; x0: number; x1: number; done: number; size: number }[] = []
+  // Where each group starts and ends on the bar (0-1), and which one is in progress.
+  const spans: { name: string; color: string; f0: number; f1: number; done: number; size: number }[] = []
   let before = 0
   f.groups.forEach((g, i) => {
     const size = g.steps.length
     spans.push({
       name: g.name,
       color: f.isFinished ? DONE : groupColor(g.name, i),
-      x0: f.total ? Math.round((BAR_W * before) / f.total) : 0,
-      x1: f.total ? Math.round((BAR_W * (before + size)) / f.total) : BAR_W,
+      f0: f.total ? before / f.total : 0,
+      f1: f.total ? (before + size) / f.total : 1,
       done: Math.max(0, Math.min(size, f.done - before)),
       size,
     })
@@ -384,73 +383,45 @@ const rowSvg = (f: Flow, W: number, mood: Mood): string => {
   })
   const live = spans.find(sp => sp.done < sp.size) ?? spans[spans.length - 1]
   const color = f.isFinished ? DONE : (live?.color ?? ACCENT)
-  const spanAt = (x: number): number => Math.max(0, spans.findIndex(sp => x < sp.x1))
-  const colorAt = (x: number): string => (spans.length ? (spans[spanAt(x)]?.color ?? color) : color)
+  // Each stretch of the fill takes its group's color.
+  const colorAt = (x: number): string => (spans.length ? (spans.find(sp => x < sp.f1) ?? spans[spans.length - 1])?.color ?? color : color)
 
-  // Dithered fill: sparse at the start, dense toward the head; each pixel takes its group's color.
-  const dots = new Map<string, string[]>()
-  const put = (c: string, r: string) => dots.set(c, [...(dots.get(c) ?? []), r])
-  const cols = Math.floor(fillW / CELL)
-  const rows = Math.floor(BAR_H / CELL)
-  for (let c = 0; c < cols; c++) {
-    const density = 0.35 + 0.6 * Math.pow(c / Math.max(1, cols), 1.2)
-    for (let r = 0; r < rows; r++) {
-      if (noise(c, r) < density) put(colorAt(c * CELL + 1), `<rect class="t${Math.floor(noise(r, c) * 4)}" x="${c * CELL + 1}" y="${r * CELL + 1}" width="2" height="2"/>`)
-    }
-  }
-  // Handed to workers, not yet accepted: a faint second layer.
-  const faint: string[] = []
-  for (let c = cols; c < Math.floor(runW / CELL); c++) {
-    for (let r = 0; r < rows; r++) {
-      if (noise(c + 7, r + 3) < 0.2) faint.push(`<rect class="t${Math.floor(noise(r + 5, c) * 4)}" x="${c * CELL + 1}" y="${r * CELL + 1}" width="1.7" height="1.7"/>`)
-    }
-  }
-
-  const ticks: string[] = []
-  for (let i = 1; i < f.total; i++) {
-    const x = Math.round((BAR_W * i) / f.total)
-    if (x > fillW + 4) ticks.push(`<rect x="${x}" y="${BAR_H / 2 - 4}" width="1.5" height="8" rx="0.75"/>`)
-  }
-  // A gap where one group ends and the next begins, and each group's name and count under it.
-  const gaps = spans.slice(1).map(sp => `<rect class="k" x="${sp.x0 - 1}" width="2.5" height="${BAR_H}"/>`)
+  const bar = barSvg({
+    style,
+    x: BAR_X,
+    y: y0,
+    w: BAR_W,
+    h: BAR_H,
+    p: ratio(f) * 100,
+    colorAt,
+    head: color,
+    live: !f.isFinished,
+    uid: 'p',
+    label: label(f),
+    steps: f.total,
+    gaps: spans.slice(1).map(sp => sp.f0),
+  })
+  // Each group's name and count under its stretch.
   const names = spans.map(sp => {
     const isLive = sp === live && !f.isFinished
-    const text = fitText(`${sp.name} ${sp.done}/${sp.size}`, 10.5, Math.max(10, sp.x1 - sp.x0 - 6))
-    return `<rect x="${sp.x0 + 1}" y="${BAR_H + 4}" width="${Math.max(2, sp.x1 - sp.x0 - 3)}" height="2" rx="1" fill="${sp.color}" opacity="${isLive ? 0.9 : 0.4}"/>
-<text x="${sp.x0 + 2}" y="${BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${isLive ? 600 : 400}" fill="${sp.color}" >${xml(text)}</text>`
+    const x0 = BAR_X + Math.round(BAR_W * sp.f0)
+    const x1 = BAR_X + Math.round(BAR_W * sp.f1)
+    const text = fitText(`${sp.name} ${sp.done}/${sp.size}`, 10.5, Math.max(10, x1 - x0 - 6))
+    return `<rect x="${x0 + 1}" y="${y0 + BAR_H + 4}" width="${Math.max(2, x1 - x0 - 3)}" height="2" rx="1" fill="${sp.color}" opacity="${isLive ? 0.9 : 0.4}"/>
+<text x="${x0 + 2}" y="${y0 + BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${isLive ? 600 : 400}" fill="${sp.color}" >${xml(text)}</text>`
   })
-
-  const text = label(f)
-  const pillW = Math.min(BAR_W, Math.round(18 + textWidth(text, 11) * 1.08))
-  const pillX = Math.max(0, Math.min(BAR_W - pillW, fillW - pillW))
   const percent = `${Math.round(ratio(f) * 100)}%`
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${RH}" viewBox="0 0 ${W} ${RH}">
 <style>
-.t{fill:#1f1f1f}.m{fill:#6f6d67}.k{fill:#f7f6f2}.kb{stroke:#d9d7d0}.tk{fill:#c4c2bb}
-@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.k{fill:#2c2c2c}.kb{stroke:none}.tk{fill:#5a5a5a}}
-/* Pixels twinkle in four out-of-phase groups; a finished bar settles to a slow glow. */
-.t0,.t1,.t2,.t3{animation:tw ${f.isFinished ? 3.2 : 2.2}s ease-in-out infinite}
-.t1{animation-duration:${f.isFinished ? 3.8 : 2.8}s;animation-delay:-.7s}.t2{animation-duration:${f.isFinished ? 4.4 : 1.9}s;animation-delay:-1.3s}.t3{animation-duration:${f.isFinished ? 3.5 : 3.3}s;animation-delay:-.4s}
-@keyframes tw{0%,100%{opacity:1}50%{opacity:${f.isFinished ? 0.8 : 0.3}}}
-@media (prefers-reduced-motion: reduce){.t0,.t1,.t2,.t3{animation:none}}
+.t{fill:#1f1f1f}.m{fill:#6f6d67}
+@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}
+${BAR_CSS}
 </style>
-<defs><clipPath id="c"><rect x="0" y="0" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/></clipPath></defs>
 <circle cx="5" cy="${mid}" r="4" fill="${color}"/>
 <text class="t" x="16" y="${mid + 4.5}" font-family="${FONT}" font-size="13" font-weight="500">${xml(title)}</text>
-<g transform="translate(${BAR_X},${y0})">
-<rect class="k" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/>
-<g clip-path="url(#c)">
-${[...dots].map(([c, rs]) => `<g fill="${c}">${rs.join('')}</g>`).join('')}
-<g fill="${color}" opacity="0.45">${faint.join('')}</g>
-<g class="tk">${ticks.join('')}</g>
-${gaps.join('')}
-</g>
-<rect class="kb" x="0.5" y="0.5" width="${BAR_W - 1}" height="${BAR_H - 1}" rx="${(BAR_H - 1) / 2}" fill="none" stroke-width="1"/>
-<rect x="${pillX}" width="${pillW}" height="${BAR_H}" rx="${BAR_H / 2}" fill="${color}"/>
-<text x="${pillX + pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-family="${FONT}" font-size="11" font-weight="600" fill="#ffffff">${xml(text)}</text>
+${bar}
 ${names.join('')}
-</g>
 <text class="m" x="${W - CRAB_W - 6}" y="${mid + 4.5}" text-anchor="end" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums">${percent}</text>
 ${CRAB_CSS}${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
 </svg>`
@@ -467,10 +438,27 @@ ${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
 <text x="${CRAB_W + 8}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(text.split(' · ')[0] ?? text)}</tspan><tspan class="m">${xml(text.includes(' · ') ? ' · ' + fitText(text.split(' · ').slice(1).join(' · '), 13, W - CRAB_W - 120) : '')}</tspan></text>
 </svg>`
 
-const barText = (f: Flow, width: number): string => {
-  const filled = Math.round(width * ratio(f))
-  return '█'.repeat(filled) + '░'.repeat(Math.max(0, width - filled))
+// The terminal's bar: the style's cells, each in its group's color.
+const barText = (f: Flow, width: number, style: HudStyle): Cell[] => {
+  const at = (x: number): string => {
+    if (f.isFinished) return DONE
+    let before = 0
+    for (const [i, g] of f.groups.entries()) {
+      before += g.steps.length
+      if (f.total && x < before / f.total) return groupColor(g.name, i)
+    }
+    return f.groups.length ? groupColor(f.groups[f.groups.length - 1]?.name ?? '', f.groups.length - 1) : ACCENT
+  }
+  return barCells(style, ratio(f) * 100, width, i => at((i + 0.5) / width), 0, false)
 }
+
+// A text bar's cells as Texts, neighbours of one look joined.
+const cellTexts = (Text: any, cells: Cell[]) =>
+  mergeCells(cells).map((c, i) => (
+    <Text key={i} color={c.c} dimColor={c.dim} backgroundColor={c.bg}>
+      {c.t}
+    </Text>
+  ))
 
 // ---------------------------------------------------------------------------
 // Agents panel: every subagent of the session, plus the tasks the flow planned.
@@ -506,6 +494,9 @@ const ROLE_COLOR: Record<string, string> = {
   conferente: '#3F7CAC',
   curador: '#A0522D',
 }
+
+// A bar that shows the context rather than progress.
+const GREY = '#9a9a96'
 
 const colorOf = (tier: string): string => TIER_COLOR[tier] ?? ROLE_COLOR[tier] ?? '#888780'
 
@@ -942,7 +933,7 @@ const statusMark = (x: number, y: number, status: string, color: string): string
 }
 
 const svg = (W: number, H: number, body: string): string =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}${CRAB_CSS}${body}</svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}<style>${BAR_CSS}</style>${CRAB_CSS}${body}</svg>`
 
 // The pane's own title already says "Agents": the header names the flow, if any.
 const headerSvg = (W: number, title: string, t: ReturnType<typeof totals>): string => {
@@ -1010,7 +1001,7 @@ const progressOf = (a: AgentRun): number | null => {
 
 const ctxOf = (a: AgentRun): number => (a.contextMax ? Math.min(100, Math.round((a.contextTokens / a.contextMax) * 100)) : 0)
 
-const agentSvg = (W: number, a: AgentRun, at: number): string => {
+const agentSvg = (W: number, a: AgentRun, at: number, style: HudStyle): string => {
   const s = tr()
   const tier = tierOf(a.type)
   const color = colorOf(costumeOf(a.type))
@@ -1025,7 +1016,7 @@ const agentSvg = (W: number, a: AgentRun, at: number): string => {
   const steps = a.stepTotal ? `${a.stepDone ?? 0}/${a.stepTotal}${a.stepNote ? ' · ' + a.stepNote : ''}` : ''
   const stepsW = Math.max(0, barW - textWidth(stats, 11) - 12)
   // Without reported steps the bar falls back to the context, drawn grey.
-  const fillW = Math.round(barW * (progress ?? ctx / 100))
+  const fill = progress === null ? GREY : color
   return svg(
     W,
     66,
@@ -1034,7 +1025,7 @@ const agentSvg = (W: number, a: AgentRun, at: number): string => {
 <text x="42" y="34" font-family="${FONT}" font-size="11"><tspan fill="${color}">${xml(tier === 'other' ? a.type : tier)}</tspan><tspan class="s">  ${xml(meta.join('  ·  '))}</tspan></text>
 ${steps && stepsW > 30 ? `<text class="t" x="42" y="49" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${xml(fitText(steps, 11, stepsW))}</text>` : ''}
 <text class="s" x="${42 + barW}" y="49" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${stats}</text>
-<rect class="k" x="42" y="55" width="${barW}" height="4" rx="2"/><rect${progress === null ? ' class="m"' : ''} x="42" y="55" width="${fillW}" height="4" rx="2"${progress === null ? '' : ` fill="${color}"`}/>
+${barSvg({ style, x: 42, y: 54, w: barW, h: 8, p: (progress ?? ctx / 100) * 100, colorAt: () => fill, head: fill, live: a.status === 'running' && progress !== null, uid: `a${a.id.replace(/W/g, '')}`, steps: a.stepTotal })}
 ${statusMark(W - 8, 16, a.status, color)}
 <line class="ln" x1="0" y1="65.5" x2="${W}" y2="65.5"/>`,
   )
@@ -1079,11 +1070,6 @@ const compactSvg = (W: number, list: AgentRun[], planned: Planned[], t: ReturnTy
 }
 
 // --- terminal drawing: the same rows in text.
-
-const ctxBar = (pct: number, width: number): string => {
-  const filled = Math.round((width * pct) / 100)
-  return '█'.repeat(filled) + '░'.repeat(Math.max(0, width - filled))
-}
 
 const STATUS_GLYPH: Record<string, string> = { running: '●', done: '✓', failed: '✗', planned: '◷' }
 
@@ -1399,6 +1385,7 @@ const registerProgress: Register = on => {
     const isEmpty = list.length === 0 && planned.length === 0
     const summary = `≈${fmtCost(t.cost)}, ${fmtTokens(t.tokens)} ${s.tokensWord}, ${fmtTime(t.time)}`
 
+    const styles = await read($, styleA)
     if (e.surface === 'desktop' && 'Svg' in ui) {
       const { Svg } = ui
       const W = Math.max(240, Math.min(900, (e.props.bodyColumns || 40) * 8 - 8))
@@ -1426,12 +1413,12 @@ const registerProgress: Register = on => {
           {isEmpty && <Text dimColor>{s.empty}</Text>}
           {running.length > 0 && section('h-run', `${s.running} · ${running.length}`)}
           {running.map(a => (
-            <Svg key={a.id} source={agentSvg(W, a, at)} alt={`${a.description}: ${modelName(a.model)}, ${s.isRunning}`} width={W} height={66} />
+            <Svg key={a.id} source={agentSvg(W, a, at, styles.desktop)} alt={`${a.description}: ${modelName(a.model)}, ${s.isRunning}`} width={W} height={66} />
           ))}
           {finished.length > 0 && toggleDone}
           {!p.isDoneCollapsed &&
             finished.map(a => (
-              <Svg key={a.id} source={agentSvg(W, a, at)} alt={`${a.description}: ${modelName(a.model)}, ${s.isFinished}`} width={W} height={66} />
+              <Svg key={a.id} source={agentSvg(W, a, at, styles.desktop)} alt={`${a.description}: ${modelName(a.model)}, ${s.isFinished}`} width={W} height={66} />
             ))}
           {planned.length > 0 && section('h-plan', `${s.planned} · ${planned.length}`)}
           {planned.map(pl => (
@@ -1467,7 +1454,7 @@ const registerProgress: Register = on => {
           </Text>
           <Text wrap="truncate-end">
             {'  '}
-            {progress === null ? <Text dimColor>{ctxBar(ctx, barW)}</Text> : <Text color={color}>{ctxBar(progress * 100, barW)}</Text>}
+            {cellTexts(Text, barCells(styles.terminal, progress === null ? ctx : progress * 100, barW, () => (progress === null ? GREY : color), 0, false))}
             <Text dimColor>
               {' '}
               {steps}ctx {ctx}% · {fmtTokens(a.contextTokens)} ≈{fmtCost(a.costUsd)} {fmtTime(elapsed(a, at))}
@@ -1618,7 +1605,7 @@ const registerProgress: Register = on => {
       const { Svg } = ui
       return above(
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(f, width, mood)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
+          <Svg source={rowSvg(f, width, mood, (await read($, styleA)).desktop)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
           {crewButton}
           {dismiss}
         </Box>,
@@ -1634,7 +1621,9 @@ const registerProgress: Register = on => {
           <Text color={f.isFinished ? DONE : ACCENT}>● </Text>
           <Text wrap="truncate-end">{f.title}</Text>
         </Box>
-        <Text color={f.isFinished ? DONE : ACCENT}>{barText(f, barW)}</Text>
+        <Box flexDirection="row" flexShrink={0}>
+          {cellTexts(Text, barText(f, barW, (await read($, styleA)).terminal))}
+        </Box>
         <Text bold>{label(f)}</Text>
         <Text dimColor>{percent}</Text>
         <Text color={CLAY}>▣</Text>
@@ -1662,7 +1651,7 @@ const alertedA = atom({ plugin: 'crabhud', key: 'alerted' } as const, [])
 // The HUD's language; null until the person picks one on the first run.
 const langA = atom({ plugin: 'crabhud', key: 'language' } as const, null)
 // The bars' look, per surface (/hud style).
-const DEFAULT_STYLES: HudStyles = { terminal: 'pixel', desktop: 'pixel' }
+const DEFAULT_STYLES: HudStyles = { terminal: 'classic', desktop: 'pixel' }
 const styleA = atom({ plugin: 'crabhud', key: 'style' } as const, DEFAULT_STYLES)
 const STYLE_PANE = 'crabhud-style'
 

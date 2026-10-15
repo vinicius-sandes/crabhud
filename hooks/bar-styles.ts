@@ -3,7 +3,9 @@
 // `barSvg` draws one as SVG (the desktop and the remote surfaces), `barCells`
 // as text cells (the terminal). Pure, no `$`.
 
-export type BarStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark' | 'classic'
+import type { HudStyle } from '../types'
+
+export type BarStyle = HudStyle
 
 /** One cell of a text bar: its glyph, colour, and background (solid's fill). */
 export type Cell = { t: string; c?: string; bg?: string; dim?: boolean }
@@ -58,16 +60,16 @@ const textWidth = (s: string, size: number): number => [...s].reduce((w, ch) => 
 const r1 = (v: number) => Math.round(v * 10) / 10
 
 /**
- * The classes the bars use: the track (k, its border kb), what is still empty
- * (e, es), the step marks (tk), the twinkle (t0-t3) and a live head's pulse
- * (pu). Goes in the drawing's <style> once.
+ * The classes the bars use: the track (bk, its border bkb), what is still empty
+ * (be, bes), the step marks (btk), the twinkle (bt0-bt3) and a live head's pulse
+ * (bpu), prefixed so they keep clear of the panel's own classes. Goes in the drawing's <style> once.
  */
-export const BAR_CSS = `.k{fill:#f7f6f2}.kb{stroke:#d9d7d0}.e{fill:#d6d4cd}.es{stroke:#c9c7c0}.tk{fill:#c4c2bb}
-@media (prefers-color-scheme: dark){.k{fill:#2c2c2c}.kb{stroke:none}.e{fill:#454542}.es{stroke:#5a5a56}.tk{fill:#5a5a5a}}
-.t0,.t1,.t2,.t3{animation:tw 2.2s ease-in-out infinite}.t1{animation-duration:2.8s;animation-delay:-.7s}.t2{animation-duration:1.9s;animation-delay:-1.3s}.t3{animation-duration:3.3s;animation-delay:-.4s}
-@keyframes tw{0%,100%{opacity:1}50%{opacity:.3}}
-.pu{animation:pu 1.1s ease-in-out infinite}@keyframes pu{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion: reduce){.t0,.t1,.t2,.t3,.pu,.sw{animation:none}}`
+export const BAR_CSS = `.bk{fill:#f7f6f2}.bkb{stroke:#d9d7d0}.be{fill:#d6d4cd}.bes{stroke:#c9c7c0}.btk{fill:#c4c2bb}
+@media (prefers-color-scheme: dark){.bk{fill:#2c2c2c}.bkb{stroke:none}.be{fill:#454542}.bes{stroke:#5a5a56}.btk{fill:#5a5a5a}}
+.bt0,.bt1,.bt2,.bt3{animation:btw 2.2s ease-in-out infinite}.bt1{animation-duration:2.8s;animation-delay:-.7s}.bt2{animation-duration:1.9s;animation-delay:-1.3s}.bt3{animation-duration:3.3s;animation-delay:-.4s}
+@keyframes btw{0%,100%{opacity:1}50%{opacity:.3}}
+.bpu{animation:bpu 1.1s ease-in-out infinite}@keyframes bpu{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.bt0,.bt1,.bt2,.bt3,.bpu,.bsw{animation:none}}`
 
 export type BarSvgInput = {
   style: BarStyle
@@ -100,7 +102,7 @@ export function barSvg(b: BarSvgInput): string {
   const fillW = Math.round((w * p) / 100)
   const head = b.head ?? b.colorAt(Math.max(0, p / 100 - 0.001))
   const live = b.live && p < 100
-  const pulse = live ? ' class="pu"' : ''
+  const pulse = live ? ' class="bpu"' : ''
   const rounded = style !== 'classic'
   const out: string[] = []
   let ticks = ''
@@ -121,7 +123,7 @@ export function barSvg(b: BarSvgInput): string {
         out.push(
           i < filled
             ? `<rect${isHead ? pulse : ''} x="${x}" width="${r1(sw)}" height="${h}" rx="${rx}" fill="${b.colorAt((i + 0.5) / count)}"/>`
-            : `<rect class="e" x="${x}" width="${r1(sw)}" height="${h}" rx="${rx}"/>`,
+            : `<rect class="be" x="${x}" width="${r1(sw)}" height="${h}" rx="${rx}"/>`,
         )
       }
       break
@@ -129,7 +131,7 @@ export function barSvg(b: BarSvgInput): string {
     case 'line': {
       const lh = Math.max(2, Math.round(h * 0.24))
       const ly = (h - lh) / 2
-      out.push(`<rect class="e" y="${ly}" width="${w}" height="${lh}" rx="${lh / 2}"/>`)
+      out.push(`<rect class="be" y="${ly}" width="${w}" height="${lh}" rx="${lh / 2}"/>`)
       out.push(...runs(fillW, b.colorAt, w).map(r => `<rect x="${r.x}" y="${ly}" width="${r.w}" height="${lh}" fill="${r.c}"/>`))
       if (fillW > 0 && !b.label) {
         const r = Math.max(1.6, Math.min(h / 2 - 0.5, lh * 1.4))
@@ -145,7 +147,7 @@ export function barSvg(b: BarSvgInput): string {
         const sweep = Math.round(Math.max(16, Math.min(60, fillW * 0.35)))
         out.push(`<defs><linearGradient id="g${uid}"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><clipPath id="f${uid}"><rect width="${fillW}" height="${h}"/></clipPath></defs>
 <style>.sw${uid}{animation:sw${uid} 2.4s linear infinite}@keyframes sw${uid}{from{transform:translateX(${-sweep}px)}to{transform:translateX(${fillW}px)}}</style>
-<g clip-path="url(#f${uid})"><rect class="sw sw${uid}" width="${sweep}" height="${h}" fill="url(#g${uid})"/></g>`)
+<g clip-path="url(#f${uid})"><rect class="bsw sw${uid}" width="${sweep}" height="${h}" fill="url(#g${uid})"/></g>`)
       }
       ticks = stepTicks(b.steps, w, fillW + 4, h)
       break
@@ -154,13 +156,13 @@ export function barSvg(b: BarSvgInput): string {
       const pitch = w / count
       const r = r1(Math.max(1.4, Math.min(h / 2 - (h >= 10 ? 2 : 0.6), pitch * 0.34)))
       const v = (p / 100) * count
-      const ring = (cx: number) => `<circle class="es" cx="${cx}" cy="${h / 2}" r="${r1(r - 0.5)}" fill="none" stroke-width="1"/>`
+      const ring = (cx: number) => `<circle class="bes" cx="${cx}" cy="${h / 2}" r="${r1(r - 0.5)}" fill="none" stroke-width="1"/>`
       for (let i = 0; i < count; i++) {
         const cx = r1(pitch * (i + 0.5))
         const c = b.colorAt((i + 0.5) / count)
         if (v - i >= 1) out.push(`<circle cx="${cx}" cy="${h / 2}" r="${r}" fill="${c}"/>`)
         else if (v - i > 0.25) out.push(`${ring(cx)}<path${pulse} d="M${cx} ${h / 2 - r}a${r} ${r} 0 0 0 0 ${2 * r}z" fill="${c}"/>`)
-        else if (live && i === Math.floor(v)) out.push(`${ring(cx)}<circle class="pu" cx="${cx}" cy="${h / 2}" r="${r1(r * 0.55)}" fill="${head}"/>`)
+        else if (live && i === Math.floor(v)) out.push(`${ring(cx)}<circle class="bpu" cx="${cx}" cy="${h / 2}" r="${r1(r * 0.55)}" fill="${head}"/>`)
         else out.push(ring(cx))
       }
       break
@@ -177,7 +179,7 @@ export function barSvg(b: BarSvgInput): string {
           // Taller toward the head: the meter rises along what is filled.
           const bh = r1((h - pad * 2) * (0.25 + 0.75 * ((i + 1) / filled)))
           out.push(`<rect${i === filled - 1 && live ? pulse : ''} x="${x}" y="${r1(h - pad - bh)}" width="${bw}" height="${bh}" rx="${Math.min(1, bw / 2)}" fill="${b.colorAt((i + 0.5) / n)}"/>`)
-        } else out.push(`<rect class="e" x="${x}" y="${r1(h - pad - 1.5)}" width="${bw}" height="1.5" rx=".75"/>`)
+        } else out.push(`<rect class="be" x="${x}" y="${r1(h - pad - 1.5)}" width="${bw}" height="1.5" rx=".75"/>`)
       }
       break
     }
@@ -189,7 +191,7 @@ export function barSvg(b: BarSvgInput): string {
       const fade = filled < n ? (filled >= 4 ? 2 : filled >= 2 ? 1 : 0) : 0
       for (let i = 0; i < n; i++) {
         const x = i * cw
-        if (i >= filled) out.push(`<rect class="e" x="${r1(x + cw / 2 - 0.75)}" y="${r1(h / 2 - 0.75)}" width="1.5" height="1.5"/>`)
+        if (i >= filled) out.push(`<rect class="be" x="${r1(x + cw / 2 - 0.75)}" y="${r1(h / 2 - 0.75)}" width="1.5" height="1.5"/>`)
         else {
           const op = fade >= 1 && i === filled - 1 ? 0.4 : fade === 2 && i === filled - 2 ? 0.7 : 1
           out.push(`<rect${op < 1 && live && i === filled - 1 ? pulse : ''} x="${x}" width="${cw - 0.5}" height="${h}" fill="${b.colorAt((i + 0.5) / n)}" opacity="${op}"/>`)
@@ -209,14 +211,14 @@ export function barSvg(b: BarSvgInput): string {
         const color = b.colorAt((c * C) / w)
         for (let r = 0; r < rows; r++)
           if (noise(c + b.x, r) < density)
-            out.push(`<rect class="t${Math.floor(noise(r, c + b.x) * 4)}" x="${r1(c * C + 0.6)}" y="${r1(r * C + oy + 0.4)}" width="${D}" height="${D}" fill="${color}"/>`)
+            out.push(`<rect class="bt${Math.floor(noise(r, c + b.x) * 4)}" x="${r1(c * C + 0.6)}" y="${r1(r * C + oy + 0.4)}" width="${D}" height="${D}" fill="${color}"/>`)
       }
       if (fillW > 0 && !b.label) out.push(`<rect x="${Math.max(0, fillW - 3)}" width="3" height="${h}" rx="1.5" fill="${head}"/>`)
       ticks = stepTicks(b.steps, w, fillW + 4, h)
     }
   }
 
-  const gaps = style === 'segments' || style === 'dots' ? [] : (b.gaps ?? []).map(f => `<rect class="k" x="${Math.round(w * f) - 1}" width="2.5" height="${h}"/>`)
+  const gaps = style === 'segments' || style === 'dots' ? [] : (b.gaps ?? []).map(f => `<rect class="bk" x="${Math.round(w * f) - 1}" width="2.5" height="${h}"/>`)
   let tag = ''
   if (b.label) {
     const size = h >= 14 ? 11 : 10
@@ -227,7 +229,7 @@ export function barSvg(b: BarSvgInput): string {
   // Pixel and solid sit in the rounded track; the others draw their own empties.
   const tracked = style === 'pixel' || style === 'solid'
   const clip = rounded ? `<defs><clipPath id="c${uid}"><rect width="${w}" height="${h}" rx="${h / 2}"/></clipPath></defs>` : ''
-  return `<g transform="translate(${b.x},${b.y})">${clip}${tracked ? `<rect class="k" width="${w}" height="${h}" rx="${h / 2}"/>` : ''}<g${rounded ? ` clip-path="url(#c${uid})"` : ''}>${out.join('')}${ticks}${gaps.join('')}</g>${tracked ? `<rect class="kb" x=".5" y=".5" width="${w - 1}" height="${h - 1}" rx="${(h - 1) / 2}" fill="none"/>` : ''}${tag}</g>`
+  return `<g transform="translate(${b.x},${b.y})">${clip}${tracked ? `<rect class="bk" width="${w}" height="${h}" rx="${h / 2}"/>` : ''}<g${rounded ? ` clip-path="url(#c${uid})"` : ''}>${out.join('')}${ticks}${gaps.join('')}</g>${tracked ? `<rect class="bkb" x=".5" y=".5" width="${w - 1}" height="${h - 1}" rx="${(h - 1) / 2}" fill="none"/>` : ''}${tag}</g>`
 }
 
 // The fill as runs of one colour, 2px at a time, so a group's or a theme's colours follow along.
@@ -250,7 +252,7 @@ function stepTicks(steps: number | undefined, w: number, from: number, h: number
     const x = Math.round((w * i) / steps)
     if (x > from) out.push(`<rect x="${x}" y="${h / 2 - 4}" width="1.5" height="8" rx=".75"/>`)
   }
-  return `<g class="tk">${out.join('')}</g>`
+  return `<g class="btk">${out.join('')}</g>`
 }
 
 // ---- the terminal: the same bars in text
