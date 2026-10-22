@@ -306,7 +306,7 @@ async function detectLang($: EngineInterface, option: unknown): Promise<Lang> {
 }
 
 const blank = (): Flow => ({
-  title: 'savvy-flow',
+  title: 'crab-flow',
   total: 0,
   done: 0,
   running: 0,
@@ -325,7 +325,7 @@ const cleanTasks = (tasks: ProgressInput['tasks']): PlannedTask[] | undefined =>
     ?.filter(t => t.title?.trim())
     .map(t => ({
       title: (t.title ?? '').trim(),
-      tier: (t.tier ?? '').replace(/^savvy-/, '').trim().toLowerCase(),
+      tier: (t.tier ?? '').replace(/^crab-/, '').trim().toLowerCase(),
       after: (t.after ?? []).filter(n => Number.isInteger(n) && n > 0),
     }))
 
@@ -750,7 +750,7 @@ const GREY = '#9a9a96'
 // A tier's colour, or a portrait's from the data files.
 const colorOf = (tier: string): string => TIER_COLOR[tier] ?? portraits.portraits[tier]?.color ?? '#888780'
 
-// What each savvy tier runs on, for planned tasks that have no run yet.
+// What each crab-flow tier runs on, for planned tasks that have no run yet.
 const TIER_MODEL: Record<string, string> = {
   fable: 'Fable · high',
   heavy: 'Opus · xhigh',
@@ -792,11 +792,11 @@ const costOf = (model: string, u: Usage): number => {
 
 const windowOf = (model: string): number => (/haiku/i.test(model) ? 200_000 : 1_000_000)
 
-// `savvy-careful`, or `savvy-flow:savvy-careful` when the agents ship in a plugin.
+// `crab-careful`, or `crab-flow:crab-careful` when the agents ship in a plugin.
 const tierOf = (type: string): string => {
   const bare = type.replace(/^[^:]*:/, '')
-  const t = bare.replace(/^savvy-/, '').toLowerCase()
-  return t in TIER_COLOR && bare.startsWith('savvy-') ? t : 'other'
+  const t = bare.replace(/^crab-/, '').toLowerCase()
+  return t in TIER_COLOR && bare.startsWith('crab-') ? t : 'other'
 }
 
 const modelName = (id: string): string => {
@@ -1292,7 +1292,7 @@ async function progressStart($: EngineInterface, options: Parameters<Register>[1
   await $.tool.register({
     name: 'progress',
     description:
-      'Report /savvy-flow progress to the progress bar above the prompt and the agents panel. ' +
+      'Report /crab-flow progress to the progress bar above the prompt and the agents panel. ' +
       'Call it after presenting the plan (title, total, tasks, phase "delegate"), each time a task is accepted (done), ' +
       'when switching phase or re-planning (tasks), and once at the end with finished: true. Fields left out keep their previous value. ' +
       'Optional for any long job: `groups` splits the bar into named stretches (one per stage) with their steps, and the bar and the agents panel then show the step in progress.',
@@ -1347,7 +1347,7 @@ async function progressStart($: EngineInterface, options: Parameters<Register>[1
   await $.tool.register({
     name: 'step',
     description:
-      'For savvy-flow workers: report progress on your own task to the agents panel. ' +
+      'For crab-flow workers: report progress on your own task to the agents panel. ' +
       'Right after reading the brief, call it with `total` (your plan in 3-8 steps) and `done: 0`; ' +
       'call it again as each step finishes. Cheap and silent: it only draws a bar.',
     inputSchema: {
@@ -1552,7 +1552,7 @@ async function startDemo($: EngineInterface): Promise<void> {
     if (!(await live())) return
     const now_ = await $.clock.now()
     await update($, now, () => now_)
-    await update($, agents, l => [...l.filter(a => !a.id.startsWith('demo-')), agent(0, 'crabhud:savvy-medium', 'claude-opus-5-5'), agent(1, 'crabhud:savvy-light', 'claude-sonnet-5-5')])
+    await update($, agents, l => [...l.filter(a => !a.id.startsWith('demo-')), agent(0, 'crabhud:crab-medium', 'claude-opus-5-5'), agent(1, 'crabhud:crab-light', 'claude-sonnet-5-5')])
   })())
   $.clock.after(6500, () => void (async () => {
     if (await live()) await update($, agents, l => l.map(a => (a.id.startsWith('demo-') ? { ...a, stepDone: 3 } : a)))
@@ -1729,9 +1729,9 @@ const registerProgress: Register = on => {
 
   // Safety net: worker launches move the faint layer even if the orchestrator forgets to report.
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    // `savvy-heavy`, or `crabhud:savvy-heavy` as the Agent tool lists the mod's own agents.
+    // `crab-heavy`, or `crabhud:crab-heavy` as the Agent tool lists the mod's own agents.
     const type = String(e.subagent_type ?? '').replace(/^[^:]*:/, '')
-    if (!type.startsWith('savvy-')) return next(e)
+    if (!type.startsWith('crab-')) return next(e)
 
     await update($, flow, prev => {
       const base = prev && !prev.isFinished ? { ...blank(), ...prev } : blank()
@@ -1769,9 +1769,9 @@ const registerProgress: Register = on => {
       return [...list.filter(a => a.id !== run.id), run].slice(-200)
     })
     await update($, now, () => at)
-    if (e.subagentType.replace(/^[^:]*:/, '').startsWith('savvy-')) {
+    if (e.subagentType.replace(/^[^:]*:/, '').startsWith('crab-')) {
       const f = await read($, flow)
-      await autoOpen($, f && !f.isFinished ? f.title : 'savvy-flow')
+      await autoOpen($, f && !f.isFinished ? f.title : 'crab-flow')
     } else if (!(await $.ui.panes()).some(p => p.id === PANE)) {
       void $.ui.open({ id: PANE, title: tr().pane })
     }
@@ -2057,7 +2057,7 @@ const registerProgress: Register = on => {
     const crew = list.length + plannedOf(f, list).length
     // Opens or closes the agents pane; says how many subagents this session ran.
     const crewButton = crew ? (
-      <Button key="savvy-agents" label={tr().agentsN(crew)} plain onPress={() => void togglePane($)} />
+      <Button key="crab-agents" label={tr().agentsN(crew)} plain onPress={() => void togglePane($)} />
     ) : null
     // The drawing gets the slot minus the buttons beside it (the count, the dismiss) and their gaps.
     const buttons = (crew ? Math.round(textWidth(tr().agentsN(crew), 13)) + 36 : 0) + (f ? 40 : 0)
@@ -2086,9 +2086,9 @@ const registerProgress: Register = on => {
           .join(' · ')
       : ''
     const waitRow = !waiting ? null : vector ? (
-      <ui.Svg key="savvy-wait" source={waitSvg(width, waitText)} alt={waitText} width={width} height={H} />
+      <ui.Svg key="crab-wait" source={waitSvg(width, waitText)} alt={waitText} width={width} height={H} />
     ) : (
-      <Text key="savvy-wait" color={WAIT} bold wrap="truncate-end">
+      <Text key="crab-wait" color={WAIT} bold wrap="truncate-end">
         ! {waitText}
       </Text>
     )
@@ -2128,7 +2128,7 @@ const registerProgress: Register = on => {
     const percent = `${Math.round(ratio(f) * 100)}%`
     const dismiss = (
       <Button
-        key="savvy-dismiss"
+        key="crab-dismiss"
         label="✕"
         plain
         role="dismiss"

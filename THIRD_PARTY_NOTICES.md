@@ -8,8 +8,8 @@ From [claude-kit](https://github.com/JohnnyVizz/claude-kit):
 
 - The progress bar, the crab and the agents panel (the progress part of `hooks/register.tsx`) start from
   its savvy-progress mod.
-- `skills/savvy-flow` and `agents/savvy-*.md` are its savvy-flow plugin (copied at claude-kit c871c15), with
-  the progress tools renamed to `mcp__crabhud__progress` and `mcp__crabhud__step`. Its pixel bar and gliding pill adapt
+- `skills/crab-flow` and `agents/crab-*.md` are its savvy-flow plugin (copied at claude-kit c871c15), renamed
+  to crab-flow and `crab-*`, with the progress tools renamed to `mcp__crabhud__progress` and `mcp__crabhud__step`. Its pixel bar and gliding pill adapt
 [plan-progress](https://github.com/zycck/claude-mods) by Kirill Serditov (MIT).
 
 ```
