@@ -12,7 +12,7 @@ A Claude Code mod that sits right above the prompt and beside the chat:
 - **A progress bar** for long jobs: a title, the step in progress, stretches with their own colors, and a checklist in the panel. It shows up on its own when Claude writes its task list or you approve a plan, the task at hand on its tag; skills and workflows feed it through the `mcp__crabhud__progress` tool, and subagents report their own steps through `mcp__crabhud__step`. At 100% the crab hops and throws pixel confetti.
 - **The HUD** under them: the selected **model** and **effort**, the chat's **context** and **cost**, and the account's **5-hour** and **7-day limits** with their reset times and how fast they fill (`+12%/h`, `+8%/day`), shared across every chat. Compact, each reading is a small ring; expanded, a bar. The pace turns amber, and the expanded HUD says when the limit runs out, when that comes before its reset.
 - **The agents panel** (`/agents-info`): running, finished and planned subagents with model, effort, progress, context, cost and time, each with its own crab; and what you spent today and this month, summed over every chat.
-- **`/savvy-flow`**: an orchestrated delivery flow. The session model plans, owns the design and reviews; five tiered worker agents (`savvy-fable`, `savvy-heavy`, `savvy-careful`, `savvy-medium`, `savvy-light`) implement. The flow drives the progress bar, and each worker reports its own steps to the panel.
+- **`/crab-flow`**: an orchestrated delivery flow. The session model plans, owns the design and reviews; five tiered worker agents (`crab-fable`, `crab-heavy`, `crab-careful`, `crab-medium`, `crab-light`) implement. The flow drives the progress bar, and each worker reports its own steps to the panel.
 
 <p align="center">
   <picture>
@@ -33,7 +33,7 @@ Switch the HUD between **compact** (one line, a ring per reading) and **expanded
 
 ## The bar, on its own
 
-You don't need a skill to get a progress bar. When Claude writes its own task list, the bar shows one stretch per task, and its tag names the task at hand, cut to a few words (`Adding the dark palette · 2/5`). When you approve a plan, the bar takes its title and its steps until a task list takes over, and the answer that closes the turn completes it. A skill's own bar (`/savvy-flow`, or any skill calling `mcp__crabhud__progress`) always wins over these.
+You don't need a skill to get a progress bar. When Claude writes its own task list, the bar shows one stretch per task, and its tag names the task at hand, cut to a few words (`Adding the dark palette · 2/5`). When you approve a plan, the bar takes its title and its steps until a task list takes over, and the answer that closes the turn completes it. A skill's own bar (`/crab-flow`, or any skill calling `mcp__crabhud__progress`) always wins over these.
 
 When a bar reaches 100% the crab hops and pixel confetti bursts out in the bar's colours; with sounds on, a short fanfare plays. A bar from the task list or a plan then leaves on its own after 10 seconds; a skill's bar stays until you close it.
 
@@ -87,7 +87,7 @@ When the context or a limit crosses 90%, you get a toast.
 
 ## Portraits of your own agents
 
-In the agents panel the savvy workers and Explore wear costumes of their own; any other agent is the plain crab. To dress your team's agents, put a `crabhud-portraits.json` in a folder under `~/.claude/mods/` (a repository of your team's, say). crabhud reads every one it finds there when a chat opens:
+In the agents panel the crab-flow workers and Explore wear costumes of their own; any other agent is the plain crab. To dress your team's agents, put a `crabhud-portraits.json` in a folder under `~/.claude/mods/` (a repository of your team's, say). crabhud reads every one it finds there when a chat opens:
 
 ```json
 {
@@ -167,7 +167,7 @@ To skip the question (for example, when setting up a machine from a script), set
 - `/crabhud demo` plays 20 seconds of sample data (a bar walking to its celebration, two agents, the amber wait, sample limits when there's no reading yet) and then puts everything back as it was; `/crabhud demo off` stops it.
 - `/crabhud sound on` plays a short chime when Claude waits for you and when it finishes, and a little fanfare when a bar reaches 100%; `/crabhud sound off` silences it (the default). The clips are the mod's own (`sounds/`); macOS plays them, a Windows or Linux terminal has no player and stays quiet.
 - `/agents-info` opens or closes the agents panel.
-- `/savvy-flow <task>` (`/crabhud:savvy-flow` when another skill has the same name) runs the orchestrated flow.
+- `/crab-flow <task>` (`/crabhud:crab-flow` when another skill has the same name) runs the orchestrated flow.
 
 ## Cost
 
@@ -191,4 +191,4 @@ claude plugin test ~/.claude/mods/crabhud
 
 ## License
 
-[MIT](LICENSE). The progress bar, the crab, the agents panel and `/savvy-flow` start from JohnnyVizz's [claude-kit](https://github.com/JohnnyVizz/claude-kit), and the bar styles follow nvr0x5's [claude-deck](https://github.com/nvr0x5/claude-deck) (both MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). The progress bar, the crab, the agents panel and `/crab-flow` start from JohnnyVizz's [claude-kit](https://github.com/JohnnyVizz/claude-kit) (its savvy-progress mod and savvy-flow plugin), and the bar styles follow nvr0x5's [claude-deck](https://github.com/nvr0x5/claude-deck) (both MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

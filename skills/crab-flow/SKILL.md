@@ -1,11 +1,11 @@
 ---
-name: savvy-flow
-description: Orchestrated delivery flow. The session model plans, owns design, delegates implementation to tiered worker subagents (savvy-fable / savvy-heavy / savvy-careful / savvy-medium / savvy-light) and adversarially reviews their output. Invoke with /savvy-flow <task>.
+name: crab-flow
+description: Orchestrated delivery flow. The session model plans, owns design, delegates implementation to tiered worker subagents (crab-fable / crab-heavy / crab-careful / crab-medium / crab-light) and adversarially reviews their output. Invoke with /crab-flow <task>.
 disable-model-invocation: true
 argument-hint: <task description>
 ---
 
-# Savvy Flow
+# Crab Flow
 
 You are the **orchestrator**. You think, plan, decide, and review. Workers execute. Never do a worker's job yourself, and never let a worker do yours.
 
@@ -14,12 +14,12 @@ Task from the user: $ARGUMENTS
 ## 0. Preconditions
 
 - The flow is designed for a strong orchestrator model at high effort (Fable high is the reference setup). Do not try to detect or verify the session's model or effort — you cannot see the effort level. Whatever the session runs on is the user's deliberate choice; just orchestrate.
-- Worker agents must exist: `savvy-fable`, `savvy-heavy`, `savvy-careful`, `savvy-medium`, `savvy-light` (shipped with the crabhud mod, so the Agent tool lists them as `crabhud:savvy-careful` and so on; or in `~/.claude/agents/`). If the Agent tool does not list them, stop and tell the user.
+- Worker agents must exist: `crab-fable`, `crab-heavy`, `crab-careful`, `crab-medium`, `crab-light` (shipped with the crabhud mod, so the Agent tool lists them as `crabhud:crab-careful` and so on; or in `~/.claude/agents/`). If the Agent tool does not list them, stop and tell the user.
 
 ## Progress bar
 
 If the tool `mcp__crabhud__progress` appears among your tools, including as a deferred tool, it is available: a deferred tool only needs loading first with ToolSearch (`select:mcp__crabhud__progress`). Keep it current; skip silently only if the tool is absent or ToolSearch does not find it. Call it:
-- after presenting the plan: `title` (a few words), `total` (number of worker tasks), `tasks` (`[{ title, tier, after }]` in plan order; `tier` without the `savvy-` prefix, `after` the numbers of the tasks it waits for), `phase: "delegate"` (or `"design"` while in section 2);
+- after presenting the plan: `title` (a few words), `total` (number of worker tasks), `tasks` (`[{ title, tier, after }]` in plan order; `tier` without the `crab-` prefix, `after` the numbers of the tasks it waits for), `phase: "delegate"` (or `"design"` while in section 2);
 - each time a task is accepted in review: `done` (accepted so far); switch `phase` to `"review"` while reviewing;
 - if re-planning changes the tasks: the new `tasks` and `total`;
 - once at close: `finished: true`.
@@ -59,7 +59,7 @@ Design decisions are yours. Workers never invent UI, with one exception below.
 - **Small/contained UI** (a component, a state, a screen tweak): decide the design yourself and write it into the worker brief as concrete specs (structure, states, spacing/typography rules, which existing components to reuse).
 - **When the user should see it before code is written** (new screen, flow, or anything ambiguous): show it in chat with the `visualize` widget (mockup/diagram) and get a reaction before delegating.
 - **Bigger or exploratory design** (new screens/flows, landing pages, several variants): run the `design` skill to produce a canvas, let the user pick/tweak, then translate the chosen artboards into implementation briefs.
-- **Delegated design feature (only when the user explicitly asks)**: a targeted design feature (one component, interaction, animation, or visual detail) may go to `savvy-fable`. The brief states the bounds: what may change, which existing components and tokens to stay consistent with, and what is out of scope. You still review the visual result and own acceptance.
+- **Delegated design feature (only when the user explicitly asks)**: a targeted design feature (one component, interaction, animation, or visual detail) may go to `crab-fable`. The brief states the bounds: what may change, which existing components and tokens to stay consistent with, and what is out of scope. You still review the visual result and own acceptance.
 - For frontend styling direction, consult the `frontend-design` skill. For any chart/graph, consult `dataviz` before specifying it.
 - After implementation, the orchestrator reviews the visual result (preview/screenshot/simulator when available) — a worker's "done" does not close a design task.
 
@@ -69,21 +69,21 @@ Pick the cheapest tier that will get the task right the first time. Two axes: **
 
 | Tier | Agent | Model / effort | Use for |
 |------|-------|----------------|---------|
-| Fable | `savvy-fable` | Fable / high | "Hardest problems": very complex logic (subtle algorithms, concurrency, many interacting states), hard bugs that resist ordinary debugging or survived a Heavy investigation; targeted design features, only when the user asks (section 2) |
-| Heavy | `savvy-heavy` | Opus / xhigh | "Understand and find": unfamiliar or messy code, unclear root cause, non-obvious architecture, large contexts, anything where a wrong first approach is expensive |
-| Careful | `savvy-careful` | Opus / high | "Do it right": the approach is clear but execution is delicate. Multi-file refactors, fixes that must preserve invariants, logic with many edge cases, concurrency |
-| Medium | `savvy-medium` | Opus / medium | Standard feature work, bug fixes with a known cause, changes confined to a few files with clear requirements |
-| Light | `savvy-light` | Opus / low | Mechanical edits, renames, boilerplate, config, small isolated fixes, running builds/tests and reporting |
+| Fable | `crab-fable` | Fable / high | "Hardest problems": very complex logic (subtle algorithms, concurrency, many interacting states), hard bugs that resist ordinary debugging or survived a Heavy investigation; targeted design features, only when the user asks (section 2) |
+| Heavy | `crab-heavy` | Opus / xhigh | "Understand and find": unfamiliar or messy code, unclear root cause, non-obvious architecture, large contexts, anything where a wrong first approach is expensive |
+| Careful | `crab-careful` | Opus / high | "Do it right": the approach is clear but execution is delicate. Multi-file refactors, fixes that must preserve invariants, logic with many edge cases, concurrency |
+| Medium | `crab-medium` | Opus / medium | Standard feature work, bug fixes with a known cause, changes confined to a few files with clear requirements |
+| Light | `crab-light` | Opus / low | Mechanical edits, renames, boilerplate, config, small isolated fixes, running builds/tests and reporting |
 
 Heuristics:
 - Uncertain between two tiers → take the higher one. Exception: Fable is a reserve tier; pick it only when the task clearly meets its criteria, otherwise Heavy.
 - Heavy vs Careful is about the kind of difficulty, not the amount: insight needed → Heavy; thoroughness needed → Careful. A task that needs both is two tasks: Heavy investigates and produces a precise brief, Careful implements it.
 - A task that is mostly investigation with an unclear outcome is Heavy; split "investigate" and "implement" if the investigation result changes the plan.
-- Never delegate final judgment (section 5) to any tier. Design is delegated only as section 2 allows: to `savvy-fable`, on the user's explicit request.
+- Never delegate final judgment (section 5) to any tier. Design is delegated only as section 2 allows: to `crab-fable`, on the user's explicit request.
 
 ## 4. Delegate
 
-- Use the Agent tool with `subagent_type` = the tier agent name exactly as the Agent tool lists it (`crabhud:savvy-careful`, or `savvy-careful`). Run independent tasks in parallel in one message; chain dependent ones.
+- Use the Agent tool with `subagent_type` = the tier agent name exactly as the Agent tool lists it (`crabhud:crab-careful`, or `crab-careful`). Run independent tasks in parallel in one message; chain dependent ones.
 - Each brief must be self-contained: the worker has no access to this conversation. Include file paths, the decided design specs, constraints from CLAUDE.md that matter, and the exact verification expected.
 - Keep briefs tight. Do not paste the whole plan; paste this task.
 - Do not implement in parallel with workers. While they run, prepare the next briefs or the review checklist.

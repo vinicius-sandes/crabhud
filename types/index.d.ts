@@ -88,7 +88,7 @@ export type Flow = {
   groups: StepGroup[]
   /** The last step forward: the percent before it and when it came, so the tag glides from there. */
   moved?: { from: number; at: number }
-  /** Who drives the bar: the progress tool (a skill, /savvy-flow), Claude's own task list, or an approved plan. */
+  /** Who drives the bar: the progress tool (a skill, /crab-flow), Claude's own task list, or an approved plan. */
   source?: 'tool' | 'todo' | 'plan'
   /** When it reached 100%, for the crab's celebration. */
   doneAt?: number
