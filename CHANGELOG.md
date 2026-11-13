@@ -1,6 +1,8 @@
 # Changelog
 
-## 3.1.0 (unreleased)
+## Unreleased
+
+## 3.1.0 (2026-11-13)
 
 - Five new bar styles: wave, stripes, neon, glass and stairs (twelve in all); spark fills up at 100 %, classic gets small rounded corners.
 - The fill's end is rounded in pixel, solid and line, and the progress tag stays on the group in progress.
