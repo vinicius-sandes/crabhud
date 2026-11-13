@@ -69,7 +69,7 @@ function world(
     const kinds = new Map<string, string>()
     for (const p of files.keys()) {
       if (!p.startsWith(dir)) continue
-      const [name, ...rest] = p.slice(dir.length).split('/')
+      const [name = '', ...rest] = p.slice(dir.length).split('/')
       kinds.set(name, rest.length > 0 ? 'dir' : 'file')
     }
     return { value: [...kinds].map(([name, kind]) => ({ name, kind, size: 0 })) }
@@ -259,7 +259,10 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
     await fit(ui, { columns, rows: 1, in: 'hud' })
     const line = await shown(ui)
     console.log(`terminal ${columns}: ${line} (${line.length})`)
-    expect(line).toContain('$4.32')
+    // With room for the resets the cost is always there; without, it takes turns with the
+    // 5-hour reset, ten seconds each, by the real clock (the terminal's countdown runs on it).
+    if (line.includes('↻ 1d') || columns >= 100) expect(line).toContain('$4.32')
+    else expect(line).toMatch(/\$4\.32|5h ↻ \d/)
     expect(line.length <= columns).toBe(true)
   }
   await ui.unmount()
@@ -276,7 +279,7 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
   }
 })
 
-test('compact: the spinner turns in a box of fixed width, so the row never moves', async ($, on) => {
+test('compact: the terminal spinner turns in a box of fixed width, so the row never moves; the app ✻ turns in place', async ($, on) => {
   world(on)
   await start($, on)
   await $.session.measure(measure)
@@ -302,12 +305,15 @@ test('compact: the spinner turns in a box of fixed width, so the row never moves
   expect(new Set(frames.map(f => f.glyph)).size > 1).toBe(true)
   expect(frames.every(f => typeof f.width === 'number' && f.width === ready.width)).toBe(true)
   await ui.unmount()
-  // The app: the ✻ turns in CSS, in place; idle, a check.
+  // The app: the ✻ turns in CSS around its own centre (drawn, not typed, so it does
+  // not bob); idle, a check.
   const appIdle = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(String((await hudSvg(appIdle)).props.source)).not.toContain('class="spin"')
   await appIdle.unmount()
   const appBusy = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND, props: { ...BAND.props, isWorking: true } } as any)
-  expect(String((await hudSvg(appBusy)).props.source)).toContain('class="spin"')
+  const busy = String((await hudSvg(appBusy)).props.source)
+  expect(busy).toContain('class="spin"')
+  expect(busy).not.toContain('transform-box:fill-box;transform-origin:center;animation:hs')
   await appBusy.unmount()
 })
 
@@ -582,11 +588,12 @@ function panes(on: any, opened: any[] = []) {
 
 // The bars' glyphs: in the terminal, those it drew; in the app, whose drawing
 // names its style, a sample of that style's.
-const SAMPLE_GLYPHS: Record<string, string> = { pixel: '⣿⣀', segments: '▰▱', line: '━─', solid: ' ', dots: '●○', spark: '▇▁', classic: '█·' }
+const SAMPLE_GLYPHS: Record<string, string> = { pixel: '⣿⣀', segments: '▰▱', line: '━─', solid: ' ', dots: '●○', spark: '▇▁', classic: '█·', wave: '≈·', stripes: '▞░', neon: '━┄', glass: '▄ ', stairs: '▃▇' }
+const ALL_STYLES = ['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic', 'wave', 'stripes', 'neon', 'glass', 'stairs']
 async function barGlyphs(ui: any): Promise<string> {
   const style = await styleOf(ui)
   if (style) return SAMPLE_GLYPHS[style] ?? ''
-  return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇⣀-⣿ ]/g, '')
+  return (await shown(ui)).replace(/[^█▓▒·▰▱━╸─●◐◉○▁▂▃▄▅▆▇⣀-⣿≈≋~▞░┄ ]/g, '')
 }
 
 test('/crabhud style <name> sets the bars on every surface and keeps the pick', async ($, on) => {
@@ -630,7 +637,7 @@ test('a saved style comes back with the next session', async ($, on) => {
   await desk.unmount()
 })
 
-test('/crabhud style opens the picker: seven live previews (Client in the terminal, Svg in the app), a key each, the pick per surface', async ($, on) => {
+test('/crabhud style opens the picker: twelve live previews (Client in the terminal, Svg in the app), a key each, the pick per surface', async ($, on) => {
   world(on, {}, new Map(), { language: 'en', expanded: true })
   const opened = panes(on)
   await start($, on)
@@ -643,11 +650,11 @@ test('/crabhud style opens the picker: seven live previews (Client in the termin
     const previews = surface === 'terminal'
       ? (await ui.findAll({ type: 'Client' })).map((c: any) => c.props.props.style)
       : (await ui.findAll({ type: 'Svg' })).map((c: any) => String(c.props.source).match(/data-preview="(\w+)"/)?.[1])
-    expect(previews).toEqual(['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic'])
+    expect(previews).toEqual(ALL_STYLES)
     if (surface === 'desktop') expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
     const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
     expect(words).toContain('← now')
-    expect(words).toContain('Press 1/2/3/4/5/6/7')
+    expect(words).toContain('Press 1–9, a, b, c')
     // Key 5, Dots: for this surface only.
     await ui.press({ key: 'style-dots' })
     await ui.unmount()
@@ -670,7 +677,7 @@ test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => 
   world(on)
   panes(on)
   await start($, on)
-  for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic']) {
+  for (const style of ALL_STYLES) {
     await $.command.run({ command: 'crabhud', args: `style ${style}` } as any)
     for (const surface of ['terminal', 'desktop'] as const) {
       for (const pct of [0, 64, 100]) {
@@ -850,7 +857,7 @@ test('every style draws the progress bar, unfinished and finished', async ($, on
   world(on)
   panes(on)
   await start($, on)
-  for (const style of ['pixel', 'segments', 'line', 'solid', 'dots', 'spark', 'classic']) {
+  for (const style of ALL_STYLES) {
     await $.command.run({ command: 'crabhud', args: `style ${style}` } as any)
     for (const done of [5, 14]) {
       await $.tool.call({ ...PROGRESS, done } as any)
@@ -885,6 +892,36 @@ test("the panel's bars follow the styles too: the app's in the app, the terminal
   await term.unmount()
 })
 
+test('a card finished over a minute ago shrinks to one line; a failed one keeps its full card', async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  let n = 0
+  on('agent.spawn', () => ({ agentId: `agent-${++n}`, model: 'claude-sonnet-5-5' }) as any)
+  on('turn.complete', () => ({ text: 'Done.' }) as any)
+  await start($, on)
+  await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'a', description: 'Rename the helpers', subagentType: 'crab-light' } as any)
+  await $.agent.spawn({ tool_use_id: 'tu-2', prompt: 'b', description: 'Chase the flaky test', subagentType: 'crab-heavy' } as any)
+  await $.turn.complete({ agentId: 'agent-1', reason: 'answer', answer: 'Done.', turnId: 'a1' } as any)
+  await $.turn.complete({ agentId: 'agent-2', reason: 'error', answer: '', turnId: 'a2' } as any)
+  const heights = async () => {
+    const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
+    const cards = (await app.findAll({ type: 'Svg' })) as any[]
+    const h = (name: string) => cards.find(c => String(c.props.alt).startsWith(name))?.props.height
+    const out = [h('Rename'), h('Chase')]
+    await app.unmount()
+    return out
+  }
+  expect(await heights()).toEqual([66, 66])
+  await clock.advance(61_000)
+  await $.agent.spawn({ tool_use_id: 'tu-3', prompt: 'c', description: 'Write the notes', subagentType: 'crab-light' } as any)
+  expect(await heights()).toEqual([26, 66])
+  const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...PANEL } as any)
+  const text = await allText(term)
+  console.log(`terminal panel, one shrunk: ${text}`)
+  expect(text).toMatch(/Rename the helpers✓≈\$0\.00 0:00/)
+  await term.unmount()
+})
+
 // ---- Phase 3: the walking crab, waiting on the person, sounds, the limits' pace, the gliding tag ----
 
 const WORKING_BAND = { ...BAND, props: { ...BAND.props, isWorking: true } } as const
@@ -904,6 +941,38 @@ test('at work the crab walks the free part of the row; asleep it keeps still', a
   const idle = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(await svgWith(idle, 'data-walk=')).toBeUndefined()
   await idle.unmount()
+})
+
+test('a new mood sets the crab off from where it stood, never from the start', async ($, on) => {
+  const { clock } = world(on)
+  panes(on)
+  // Mid-read, the row as the person sees it.
+  let reading = ''
+  on('tool.call', (async () => {
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
+    reading = String((await svgWith(ui, 'data-walk='))?.props.source)
+    await ui.unmount()
+    return { result: 'ok' }
+  }) as any)
+  on('turn.start', ((_$: unknown, e: any) => ({ turnId: e.turnId })) as any)
+  await start($, on)
+  await $.turn.start({ text: 'go', turnId: 'x' } as any)
+  const first = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
+  const thinking = String((await svgWith(first, 'data-walk='))?.props.source)
+  await first.unmount()
+  expect(thinking).toContain('data-walk="think"')
+  // Where the thinking crab stands 5 s in: its loop's stop 1 (it stops there from 14% to 50% of 16 s).
+  const stop1 = Number(thinking.match(/14(?:\.\d+)?%\{transform:translateX\((\d+)px\)\}/)?.[1])
+  // The first scene has no costume to change from.
+  expect(thinking).not.toContain('@keyframes cin')
+  await clock.advance(5000)
+  await $.tool.call({ tool: 'Read', tool_use_id: 'r1', file_path: '/a.ts' } as any)
+  expect(reading).toContain('data-walk="analyze"')
+  // It runs off from right where the thinking crab stood, not from the new loop's start,
+  // and the new costume fades in.
+  const from = Number(reading.match(/@keyframes rn\{from\{transform:translateX\((\d+)px\)\}/)?.[1])
+  expect(from).toBe(stop1)
+  expect(reading).toContain('@keyframes cin')
 })
 
 test("Claude's question turns the row amber until it is answered", async ($, on) => {
@@ -931,7 +1000,10 @@ test("Claude's question turns the row amber until it is answered", async ($, on)
 test('a permission prompt that stands turns the row amber; in the terminal too', async ($, on) => {
   const { clock } = world(on)
   panes(on)
-  on('tool.check', () => ({ decision: 'ask' }) as any)
+  // In a test nobody can answer an ask, so the engine's own check of a call turns
+  // an ask into a deny at once: the call is let through, and the ask comes as a
+  // query about it while it runs, as the mode's dialog would.
+  on('tool.check', ((_$: unknown, e: any) => ({ decision: e.tool_use_id ? 'allow' : 'ask' })) as any)
   on('tool.call', (async () => {
     await clock.sleep(5000)
     return { result: 'ran' }
@@ -939,8 +1011,7 @@ test('a permission prompt that stands turns the row amber; in the terminal too',
   await start($, on)
   const ran = $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' } as any)
   await clock.settle()
-  // The engine decides on the call while it is in flight: the mode will ask.
-  await $.tool.check({ tool: 'Bash', input: { command: 'npm test' }, tool_use_id: 'b1' } as any)
+  await $.tool.check({ tool: 'Bash', input: { command: 'npm test' } } as any)
   await clock.advance(700)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...WORKING_BAND } as any)
   const text = await allText(ui)
@@ -990,6 +1061,30 @@ test("the HUD shows how fast a limit fills, amber when it runs out before its re
   expect(alt).toContain('+60%/h')
   expect(alt).toContain('runs out in 1h')
   await ui.unmount()
+})
+
+test('/crabhud budget turns the cost amber past it, keeps the pick, and the open HUD sums today and the month', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en', expanded: true })
+  panes(on)
+  await start($, on)
+  await $.session.measure(measure)
+  const set = await $.command.run({ command: 'crabhud', args: 'budget 4' } as any)
+  expect(set.text).toContain('$4.00')
+  // The first reading is the baseline; what the chat spends after it counts for today.
+  await $.session.measure({ ...measure, cost: { usd: 5 } })
+  const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  const src = String((await hudSvg(app))?.props.source)
+  // $5.00 is past $4: amber; the last line has the day's and month's spend and the budget.
+  expect(src).toMatch(/fill="#E9A23B" font-weight="600">\$5\.00/)
+  expect(src).toContain('today ≈$0.68 · month ≈$0.68 · budget $4.00')
+  await app.unmount()
+  const bad = await $.command.run({ command: 'crabhud', args: 'budget lots' } as any)
+  expect(bad.text).toContain('not an amount')
+  const off = await $.command.run({ command: 'crabhud', args: 'budget off' } as any)
+  expect(off.text).toContain('No budget')
+  const later = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  expect(String((await hudSvg(later))?.props.source)).not.toMatch(/fill="#E9A23B" font-weight="600">\$5\.00/)
+  await later.unmount()
 })
 
 test('a step forward makes the progress tag glide from where it was', async ($, on) => {

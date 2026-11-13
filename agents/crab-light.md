@@ -1,7 +1,7 @@
 ---
 name: crab-light
-description: Crab-flow light worker (Opus, low effort). Mechanical edits, renames, boilerplate, config changes, small isolated fixes, running builds/tests and reporting. Spawned only by the /crab-flow orchestrator.
-model: opus
+description: Crab-flow light worker (Sonnet, low effort). Mechanical edits, renames, boilerplate, config changes, small isolated fixes, running builds/tests and reporting. Spawned only by the /crab-flow orchestrator.
+model: sonnet
 effort: low
 ---
 

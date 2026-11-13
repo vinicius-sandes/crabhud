@@ -1,11 +1,11 @@
 // The HUD in the app: one SVG the hooks module draws (the desktop's Client
 // draws text only), closed in one row or open in four or more. The bars come
-// from bar-styles; the spinner's turn and Ultracode's wave are CSS
+// from bar-styles; the ✻'s turn and Ultracode's wave are CSS
 // animations, so the drawing moves without redrawing. Pure, no `$`.
 
 import type { HudLimit, HudProps } from '../types'
 import { BAR_CSS, barSvg } from './bar-styles'
-import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pace, pctText, tone } from './hud-words'
+import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pace, pctText, tone, overBudget, spendLine, SWAP_MS } from './hud-words'
 
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
 // Ultracode's palette, purple to pink, along the bars and its label.
@@ -20,7 +20,7 @@ const CSS = `.t{fill:#1f1f1f}.m{fill:#6f6d67}.sep{fill:#c9c7c0}.rt{stroke:#dedbd
 @media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.sep{fill:#4a4a47}.rt{stroke:#3d3c39}.rg{stroke:#fff}}
 .rb{animation:rb 2.6s ease-in-out infinite}@keyframes rb{50%{opacity:.72}}
 @media (prefers-reduced-motion: reduce){.rb,.rs{animation:none}.rs{opacity:0}}
-.spin{transform-box:fill-box;transform-origin:center;animation:hs 1.4s linear infinite}@keyframes hs{to{transform:rotate(360deg)}}
+.spin{animation:hs 1.4s linear infinite}@keyframes hs{to{transform:rotate(360deg)}}
 .uw{animation:uw 7s linear infinite}@keyframes uw{from{transform:translateX(-50%)}to{transform:translateX(0)}}
 @media (prefers-reduced-motion: reduce){.spin,.uw{animation:none}}`
 
@@ -37,6 +37,8 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   const ctxP = p.chat?.ctxPercent ?? null
   const alert = [ctxP ?? 0, ...limits.map(l => l.percent)].some(v => v >= 90)
   const cost = p.chat?.costUsd != null ? `$${p.chat.costUsd.toFixed(2)}` : '$—'
+  // Over the budget (/crabhud budget) the cost turns amber.
+  const costLook = (cls = '') => (overBudget(p) ? { cls: cls || undefined, bold: true, fill: AMBER } : { cls: `t${cls ? ' ' + cls : ''}`, bold: true })
   const ultra = p.ultracode
   // The app's picker sets Ultracode on top of Extra: then it reads just "Ultracode".
   const level = ultra && (p.effort === 'xhigh' || p.effort === null) ? null : p.effort
@@ -47,10 +49,12 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
 
   const T = (x: number, y: number, s: string, o: { cls?: string; size?: number; bold?: boolean; fill?: string; anchor?: string } = {}) =>
     `<text${o.cls ? ` class="${o.cls}"` : ''} x="${Math.round(x * 10) / 10}" y="${y}"${o.anchor ? ` text-anchor="${o.anchor}"` : ''} font-family="${FONT}" font-size="${o.size ?? 12.5}"${o.bold ? ' font-weight="600"' : ''}${o.fill ? ` fill="${o.fill}"` : ''} font-variant-numeric="tabular-nums">${xml(s)}</text>`
-  // Working: the ✻ turns; an alert: a red !; else a green check.
+  // Working: the ✻ turns. It turns around the middle of its drawing, which sits 4.85 px
+  // above its baseline at 14 px, so it stays put; the box of the letter, which it used to
+  // turn around, reaches below the drawing, and the ✻ bobbed. An alert: a red !; else a green check.
   const status = (x: number, cy: number) =>
     p.working
-      ? `<text class="spin" x="${x + 6}" y="${cy + 4.5}" text-anchor="middle" font-family="${FONT}" font-size="14" fill="${ORANGE}">✻</text>`
+      ? `<g transform="translate(${x + 6} ${cy - 0.35})"><text class="spin" x="0" y="4.85" text-anchor="middle" font-family="${FONT}" font-size="14" fill="${ORANGE}">✻</text></g>`
       : alert
         ? T(x + 6, cy + 4.5, '!', { size: 14, bold: true, fill: RED, anchor: 'middle' })
         : `<path d="M${x + 1} ${cy}l3 3 6-6.5" fill="none" stroke="${GREEN}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`
@@ -167,7 +171,15 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
       sep()
       mini('7d', week?.percent ?? null, GREEN, left(week, true), week)
       sep()
-      put(cost, { cls: 't', bold: true })
+      // No room for the resets: the cost takes turns with the 5-hour reset, ten seconds each,
+      // in step across redraws (a negative delay by the clock).
+      const swap = !resets && five?.resetsAt != null ? `5h ↻ ${left(five, true)}` : ''
+      if (swap) {
+        const delay = -(now % (SWAP_MS * 2))
+        parts.push(`<style>.ca{animation:ca ${SWAP_MS * 2}ms steps(1) ${delay}ms infinite}.cb{animation:cb ${SWAP_MS * 2}ms steps(1) ${delay}ms infinite}@keyframes ca{50%{opacity:0}}@keyframes cb{0%{opacity:0}50%{opacity:1}}@media (prefers-reduced-motion: reduce){.ca{animation:none}.cb{animation:none;opacity:0}}</style>`)
+        parts.push(T(x, y, cost, costLook('ca')), T(x, y, swap, { cls: 'm cb' }))
+        x += Math.max(textWidth(cost, 12.5, true), textWidth(swap, 12.5)) + 7
+      } else put(cost, costLook())
       return { parts, width: x - 7 }
     }
     let best = layout(false, false, false)
@@ -193,7 +205,9 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   // Open: a row per reading, every bar on the same columns.
   const RH = 28
   const rows = 3 + others.length
-  const H = RH * (rows + 1) + 6
+  // Today's and this month's spend (and the budget) on a short last line, when there is any.
+  const footer = spendLine(p, words)
+  const H = RH * (rows + 1) + 6 + (footer ? 18 : 0)
   const L = 22
   const BX = 116
   const parts: string[] = []
@@ -201,7 +215,7 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   parts.push(status(0, 14), T(L, 18, stateWord.t, { bold: true, fill: stateWord.c }), T(BX, 18, p.model, { cls: 't', bold: true }))
   const ex = BX + textWidth(p.model, 12.5, true) + 16
   parts.push(T(ex, 18, words.effort, { cls: 'm' }), effort(ex + textWidth(words.effort, 12.5) + 7, 18))
-  parts.push(`<text x="${W - 2}" y="18" text-anchor="end" font-family="${FONT}" font-size="12.5"><tspan class="m">${xml(words.chat)} </tspan><tspan class="t" font-weight="600">${xml(cost)}</tspan></text>`)
+  parts.push(`<text x="${W - 2}" y="18" text-anchor="end" font-family="${FONT}" font-size="12.5"><tspan class="m">${xml(words.chat)} </tspan><tspan${overBudget(p) ? ` fill="${AMBER}"` : ' class="t"'} font-weight="600">${xml(cost)}</tspan></text>`)
   const lines: string[] = [`${stateWord.t} · ${p.model} · ${words.effort} ${effortText} · ${words.chat} ${cost}`]
   const row = (i: number, label: string, v: number | null, base: string, detail: string, warn = '') => {
     const y = RH * i + 6
@@ -231,5 +245,9 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   row(2, words.fiveHour, five?.percent ?? null, GREEN, limitDetail(five), runsOut(five, false))
   row(3, words.sevenDay, week?.percent ?? null, GREEN, limitDetail(week), runsOut(week, false))
   others.forEach((l, i) => row(4 + i, l.kind === 'spend_limit' ? words.spend : l.kind, l.percent, GREEN, limitDetail(l)))
+  if (footer) {
+    parts.push(T(L, H - 8, footer, { cls: 'm', size: 11.5 }))
+    lines.push(footer)
+  }
   return { svg: svg(H, parts.join('')), height: H, alt: lines.join('; ') }
 }

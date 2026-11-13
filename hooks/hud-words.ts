@@ -38,6 +38,9 @@ export const WORDS = {
     perHour: '/h',
     perDay: '/day',
     runsOut: (t: string) => `runs out in ${t}`,
+    today: 'today',
+    month: 'month',
+    budget: 'budget',
   },
   'pt-BR': {
     effortNames: { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra', max: 'Máx' } as Record<string, string>,
@@ -58,6 +61,9 @@ export const WORDS = {
     perHour: '/h',
     perDay: '/dia',
     runsOut: (t: string) => `acaba em ${t}`,
+    today: 'hoje',
+    month: 'mês',
+    budget: 'teto',
   },
 }
 export function fmtLeft(ms: number, tight: boolean, now: string): string {
@@ -91,6 +97,22 @@ export function pace(l: Paced | undefined, now: number, w: Words, tight: boolean
   const ms = ((100 - l.percent) / l.rate) * 3600000
   return { rate, out: l.resetsAt != null && now + ms < l.resetsAt ? w.runsOut(fmtLeft(ms, tight, w.now)) : '' }
 }
+
+/** Past the budget the chat's cost wears amber. */
+export const overBudget = (p: { chat: { costUsd: number | null } | null; budget?: number | null }) =>
+  p.budget != null && p.chat?.costUsd != null && p.chat.costUsd > p.budget
+
+/** The open HUD's last line: today's and this month's spend, and the budget if one is set. */
+export const spendLine = (p: { spend?: { today: number; month: number } | null; budget?: number | null }, w: { today: string; month: string; budget: string }) => {
+  const parts = [
+    p.spend && p.spend.month > 0 ? `${w.today} ≈$${p.spend.today.toFixed(2)} · ${w.month} ≈$${p.spend.month.toFixed(2)}` : '',
+    p.budget != null ? `${w.budget} $${p.budget.toFixed(2)}` : '',
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
+/** Ten seconds each: the closed HUD's cost and, where the resets had no room, the 5-hour reset. */
+export const SWAP_MS = 10000
 
 export const pctText = (p: number | null) => (p === null ? '—' : `${Math.round(p)}%`)
 
