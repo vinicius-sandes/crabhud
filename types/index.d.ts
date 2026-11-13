@@ -30,8 +30,8 @@ export type HudLimits = {
 
 export type HudLang = 'en' | 'pt-BR'
 
-/** How the bars look (`/crabhud style`): six drawn styles and the classic text blocks. */
-export type HudStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark' | 'classic'
+/** How the bars look (`/crabhud style`): eleven drawn styles and the classic text blocks. */
+export type HudStyle = 'pixel' | 'segments' | 'line' | 'solid' | 'dots' | 'spark' | 'classic' | 'wave' | 'stripes' | 'neon' | 'glass' | 'stairs'
 
 /** The style picked on each surface: the desktop app and the terminal keep their own. */
 export type HudStyles = { terminal: HudStyle; desktop: HudStyle }
@@ -55,6 +55,10 @@ export type HudProps = {
   working: boolean
   expanded: boolean
   now: number
+  /** `/crabhud budget`: past this the chat's cost turns amber (null: no budget). */
+  budget?: number | null
+  /** Today's and this month's spend over every chat, for the open HUD's last line. */
+  spend?: { today: number; month: number } | null
 }
 
 // ---- Progress bar, crab and agents panel ----
@@ -174,6 +178,8 @@ declare module 'claude-code' {
       waiting: Waiting | null
       /** Sounds on (`/crabhud sound on`); off by default. */
       sound: boolean
+      /** `/crabhud budget`: past this many dollars the chat's cost turns amber; null for none. */
+      budget: number | null
       turn: TurnStats | null
       /** What the chats on this machine spent, by day (YYYY-MM-DD, local). */
       spend: Record<string, number>

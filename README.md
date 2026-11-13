@@ -5,7 +5,13 @@
   </picture>
 </p>
 
-A Claude Code mod that sits right above the prompt and beside the chat:
+<p align="center">
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-3.1.0-D97757" alt="Version 3.1.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3B9C5F" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Claude%20Code-desktop%20%26%20terminal-6B6A65" alt="Works in the Claude Code desktop app and terminal">
+</p>
+
+crabhud shows what Claude is doing, how far a long job has gone and how much of your limits is left, without leaving the chat. It's a Claude Code mod that sits right above the prompt and beside the chat:
 
 - **The crab** shows what Claude is doing right now (sleeping, thinking, analyzing, working, coordinating). In the desktop app, while Claude works it walks sideways through the free part of the row, a puff of smoke behind it, and stops to act out the task; asleep it keeps still, and beside the progress bar it sits in the corner. At the right of the row, small: how many actions this answer took so far, and for how long (`12 actions · 1m12s`).
 - **Waiting on you**: when Claude asks for a permission or asks you a question, the row turns amber until you answer.
@@ -24,12 +30,14 @@ A Claude Code mod that sits right above the prompt and beside the chat:
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/hud-dark.svg">
-    <img src="assets/hud-light.svg" alt="The HUD compact, in one line with a ring per reading, and expanded, one row per reading with its bar; the 5-hour limit fills fast enough to run out before it resets, so its pace is amber" width="880">
+    <img src="assets/hud-light.svg" alt="The HUD compact, in one line with a ring per reading, and expanded, one row per reading with its bar; the 5-hour limit fills fast enough to run out before it resets, so its pace is amber; the expanded HUD ends with today's and this month's spend and the budget" width="880">
   </picture>
 </p>
 
 
 Switch the HUD between **compact** (one line, a ring per reading) and **expanded** (one row per reading, with its bar, token counts and full reset times): in the desktop app with the ▾/▴ button beside it, in the terminal by clicking anywhere on it. Your choice is remembered. In the app the rings breathe and a glint runs along them, quicker while Claude works; in the terminal they fill in steps, ○ ◔ ◑ ◕ ●.
+
+When the compact row is too narrow for the reset times, the cost takes turns with the 5-hour reset, ten seconds each (`$4.32` ↔ `5h ↻ 2h39m`). The expanded HUD ends with what you spent today and this month, over every chat. Set a budget with `/crabhud budget 10` and the chat's cost turns amber once it passes $10.
 
 ## The bar, on its own
 
@@ -39,12 +47,12 @@ When a bar reaches 100% the crab hops and pixel confetti bursts out in the bar's
 
 ## Styles
 
-Seven styles for every bar crabhud draws: the progress bar, the expanded HUD's gauges and the bars in the agents panel. Pick one with `/crabhud style`: a picker with a live preview of each (keys 1–7). The desktop app and the terminal each keep their own pick; `/crabhud style <name>` sets both at once.
+Twelve styles for every bar crabhud draws: the progress bar, the expanded HUD's gauges and the bars in the agents panel. Pick one with `/crabhud style`: a picker with a live preview of each (keys 1–9, then a, b, c). The desktop app and the terminal each keep their own pick; `/crabhud style <name>` sets both at once.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/styles-dark.svg">
-    <img src="assets/styles-light.svg" alt="The seven bar styles on the same progress bar: Pixel, Segments, Line, Solid, Dots, Spark and Classic" width="880">
+    <img src="assets/styles-light.svg" alt="The twelve bar styles on the same progress bar: Pixel, Segments, Line, Solid, Dots, Spark, Classic, Wave, Stripes, Neon, Glass and Stairs" width="880">
   </picture>
 </p>
 
@@ -58,12 +66,20 @@ Solid     ctx ██░░░░░░ 31%  │  5h ██░░░░░░ 20%
 Dots      ctx ● ○ ○ ○  31%  │  5h ◐ ○ ○ ○  20%  │  7d ● ● ○ ○  58%
 Spark     ctx ▅█▁▁▁▁▁▁ 31%  │  5h ▅█▁▁▁▁▁▁ 20%  │  7d ▃▄▅▆█▁▁▁ 58%
 Classic   ctx █▒······ 31%  │  5h █▒······ 20%  │  7d ███▓▒··· 58%
+Wave      ctx ≈≋······ 31%  │  5h ≈≋······ 20%  │  7d ≈≋≈~≈··· 58%
+Stripes   ctx ▞▞░░░░░░ 31%  │  5h ▞▞░░░░░░ 20%  │  7d ▞▞▞▞▞░░░ 58%
+Neon      ctx ━━●┄┄┄┄┄ 31%  │  5h ━━●┄┄┄┄┄ 20%  │  7d ━━━━━●┄┄ 58%
+Glass     ctx ▄▄░░░░░░ 31%  │  5h ▄▄░░░░░░ 20%  │  7d ▄▄▄▄▄░░░ 58%
+Stairs    ctx ▃▃······ 31%  │  5h ▃▃······ 20%  │  7d ▃▃▃▅▅··· 58%
 ```
 
 - **Pixel**: pixels that thicken toward the head and twinkle (braille dots in the terminal).
 - **Segments**: a block per step. **Dots**: a dot per step. Both count the real steps of the progress bar when they fit.
 - **Line**: a thin line with a glowing head. **Solid**: a filled bar with a light that sweeps along it while Claude works (drawn above with █ and ░). **Spark**: a meter that rises as it fills.
 - **Classic**: solid blocks, █ ▓ ▒ and dots after.
+- **Wave**: liquid in a tube, its surface rolling while Claude works. **Stripes**: diagonal stripes that slide along, like a barber's pole.
+- **Neon**: a glowing tube, the percentage on a dark tag. **Glass**: a glossy bar with a highlight and a light that sweeps along it (drawn above with ▄ and ░).
+- **Stairs**: blocks that climb in three steps as the bar fills (the steps still to climb are dimmed; drawn above as dots).
 
 The defaults are **Pixel** in the desktop app and **Classic** in the terminal. While Claude works the heads pulse. The Remote Control row draws the same style, without the animation.
 
@@ -79,15 +95,15 @@ When the context or a limit crosses 90%, you get a toast.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/panel-dark.svg">
-    <img src="assets/panel-light.svg" alt="The agents panel: the flow with its cost, tokens and time; this answer's actions and time, today's and this month's spend; and three subagents, each with its own crab, model, effort, steps, context and cost" width="440">
+    <img src="assets/panel-light.svg" alt="The agents panel: the flow with its cost, tokens and time; this answer's actions and time, today's and this month's spend; two running subagents, each with its own crab, model, effort, steps, context and cost, and a finished one shrunk to a single line" width="440">
   </picture>
 </p>
 
-`/agents-info` opens it beside the chat. Each subagent gets a card with its crab, its model and effort, the steps it reports, its context, cost and time; the cards stay after they finish, with a check, and the header adds them up. Under the header, one line: this answer's actions and time at the left, and at the right what you spent today and this month, summed over every chat on the machine (only there, not in the HUD). The sums start counting the day crabhud 2.6 is installed, and keep about two months.
+`/agents-info` opens it beside the chat. Each subagent gets a card with its crab, its model and effort, the steps it reports, its context, cost and time; the cards stay after they finish, with a check, and the header adds them up. A minute after it finishes well, a card shrinks to one line (its crab, name, cost and time, and the check); a failed one keeps its full card. Under the header, one line: this answer's actions and time at the left, and at the right what you spent today and this month, summed over every chat on the machine (the expanded HUD shows it too). The sums start counting the day crabhud 2.6 is installed, and keep about two months.
 
 ## Portraits of your own agents
 
-In the agents panel the crab-flow workers and Explore wear costumes of their own; any other agent is the plain crab. To dress your team's agents, put a `crabhud-portraits.json` in a folder under `~/.claude/mods/` (a repository of your team's, say). crabhud reads every one it finds there when a chat opens:
+In the agents panel the crab-flow workers, Explore and Plan wear costumes of their own; any other agent wears the handyman's overalls. To dress your team's agents, put a `crabhud-portraits.json` in a folder under `~/.claude/mods/` (a repository of your team's, say). crabhud reads every one it finds there when a chat opens:
 
 ```json
 {
@@ -130,6 +146,14 @@ Following a chat through Remote Control (from the phone or another computer), th
 
 Works in the Claude desktop app (Code tab) and in the Claude Code terminal, on Windows, macOS, and Linux. On Linux the HUD reads the app's records from `$XDG_CONFIG_HOME` (or `~/.config`), and in the terminal it works the same as anywhere else.
 
+The quickest way, on Claude Code 2.1.275 or later:
+
+```
+/plugin install crabhud --marketplace vinicius-sandes/crabhud
+```
+
+Then open a new chat. Or install it by hand:
+
 1. Clone the repository into your mods folder:
 
    ```bash
@@ -162,7 +186,8 @@ To skip the question (for example, when setting up a machine from a script), set
 
 - `/crabhud off` hides the HUD, `/crabhud on` shows it again, `/crabhud` toggles it.
 - `/crabhud language` asks for the language again; `/crabhud language en` or `/crabhud language pt-BR` sets it directly.
-- `/crabhud style` opens the style picker; `/crabhud style pixel|segments|line|solid|dots|spark|classic` sets it directly.
+- `/crabhud style` opens the style picker; `/crabhud style pixel|segments|line|solid|dots|spark|classic|wave|stripes|neon|glass|stairs` sets it directly.
+- `/crabhud budget 10` turns this chat's cost amber once it passes $10; `/crabhud budget off` clears it. The pick is kept for the next chats.
 - `/crabhud status` sums it all up as text: model and effort, context, the limits with their reset and pace, this chat's, today's and this month's spend, the bar, the agents and your settings.
 - `/crabhud demo` plays 20 seconds of sample data (a bar walking to its celebration, two agents, the amber wait, sample limits when there's no reading yet) and then puts everything back as it was; `/crabhud demo off` stops it.
 - `/crabhud sound on` plays a short chime when Claude waits for you and when it finishes, and a little fanfare when a bar reaches 100%; `/crabhud sound off` silences it (the default). The clips are the mod's own (`sounds/`); macOS plays them, a Windows or Linux terminal has no player and stays quiet.
@@ -188,6 +213,10 @@ Everything stays on your machine. The HUD reads the desktop app's local record o
 claude plugin validate ~/.claude/mods/crabhud
 claude plugin test ~/.claude/mods/crabhud
 ```
+
+## Changelog
+
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

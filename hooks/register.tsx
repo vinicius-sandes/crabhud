@@ -8,6 +8,8 @@ import { hudSvg } from './hud-svg'
 import { CYCLE, CYCLE_S, WORDS, pace } from './hud-words'
 import { NO_PORTRAITS, mergePortraits, portraitFor, readPortraits } from './portraits'
 import type { PortraitSet } from './portraits'
+import { STRINGS, TEXT } from './words'
+import type { Lang } from './words'
 
 // crabhud: the crab and the progress bar on top of the band above the prompt, the HUD
 // under them, and the agents panel beside the chat. The engine follows $ only into
@@ -40,8 +42,9 @@ const spendA = atom({ plugin: 'crabhud', key: 'spend' } as const, {})
 const demoA = atom({ plugin: 'crabhud', key: 'demo' } as const, 0)
 // Claude's task tools (TaskCreate, TaskUpdate), by id in the order they came: the bar's steps.
 const taskItems = new Map<string, TodoItem>()
-// The calls in flight: an ask still pending after ASK_DELAY_MS is a prompt on screen.
-const inFlight = new Set<string>()
+// The calls in flight, by id, each with its tool and target: an ask still in
+// flight after ASK_DELAY_MS is a prompt on screen.
+const inFlight = new Map<string, string>()
 // An ask the mode settles at once (rules, auto mode) never shows: wait this long first.
 const ASK_DELAY_MS = 600
 
@@ -113,9 +116,9 @@ async function startWaiting($: EngineInterface, w: Waiting) {
   if (before === null) await chime($, 'wait')
 }
 
-// The scene the walking crab plays: its mood and when it began, so a redraw
-// picks the walk up where it was.
-let scene = { mood: '', at: 0 }
+// The scene the walking crab plays (see walkSvg), so a redraw picks the walk up
+// where it was and the next scene starts from where this one left the crab.
+let walk: Walk | null = null
 
 const TOOL = 'mcp__crabhud__progress'
 const STEP_TOOL = 'mcp__crabhud__step'
@@ -139,148 +142,6 @@ type ProgressInput = {
 // Language: the `language` option, else Claude Code's `language` setting, else the
 // process locale; English when nothing says Russian or Portuguese.
 
-type Lang = 'en' | 'ru' | 'pt'
-
-const STRINGS = {
-  en: {
-    pane: 'Agents',
-    cost: 'Cost',
-    tokens: 'Tokens',
-    time: 'Time',
-    collapse: 'Collapse',
-    expand: 'Expand',
-    running: 'Running',
-    finished: 'Finished',
-    planned: 'Planned',
-    empty: 'No subagents yet.',
-    round: 'round',
-    failed: 'error',
-    after: 'after',
-    tokensWord: 'tokens',
-    agentsCount: 'agents',
-    isRunning: 'running',
-    isFinished: 'finished',
-    isPlanned: 'planned',
-    opened: 'Agents panel opened.',
-    closed: 'Agents panel closed.',
-    done: 'Done',
-    plan: 'Plan',
-    design: 'Design',
-    tasks: 'Tasks',
-    review: 'Review',
-    busy: 'running',
-    sleep: 'sleeping',
-    sleepHint: 'waiting for the next task',
-    waitPermission: 'waiting for your permission',
-    waitAnswer: 'waiting for your answer',
-    think: 'thinking',
-    analyze: 'analyzing',
-    work: 'working',
-    delegate: 'coordinating',
-    agentsN: (n: number) => `${n} ${n === 1 ? 'agent' : 'agents'}`,
-    reading: 'reading',
-    searching: 'searching',
-    editing: 'editing',
-    running_: 'running',
-    browsing: 'browsing',
-    actionsN: (n: number) => `${n} ${n === 1 ? 'action' : 'actions'}`,
-    thisTurn: 'This answer',
-    today: 'Today',
-    month: 'This month',
-  },
-  ru: {
-    pane: 'Агенты',
-    cost: 'Стоимость',
-    tokens: 'Токены',
-    time: 'Время',
-    collapse: 'Свернуть',
-    expand: 'Развернуть',
-    running: 'Работают',
-    finished: 'Завершены',
-    planned: 'Запланированы',
-    empty: 'Субагентов пока нет.',
-    round: 'раунд',
-    failed: 'ошибка',
-    after: 'после',
-    tokensWord: 'токенов',
-    agentsCount: 'агентов',
-    isRunning: 'работает',
-    isFinished: 'завершён',
-    isPlanned: 'запланирована',
-    opened: 'Панель агентов открыта.',
-    closed: 'Панель агентов закрыта.',
-    done: 'Готово',
-    plan: 'План',
-    design: 'Дизайн',
-    tasks: 'Задачи',
-    review: 'Ревью',
-    busy: 'в работе',
-    sleep: 'спит',
-    sleepHint: 'ждёт следующую задачу',
-    waitPermission: 'ждёт вашего разрешения',
-    waitAnswer: 'ждёт вашего ответа',
-    think: 'думает',
-    analyze: 'анализирует',
-    work: 'работает',
-    delegate: 'координирует',
-    agentsN: (n: number) => `${n} агент.`,
-    reading: 'читает',
-    searching: 'ищет',
-    editing: 'правит',
-    running_: 'запускает',
-    browsing: 'смотрит',
-    actionsN: (n: number) => `${n} действ.`,
-    thisTurn: 'Этот ответ',
-    today: 'Сегодня',
-    month: 'Этот месяц',
-  },
-  pt: {
-    pane: 'Agentes',
-    cost: 'Custo',
-    tokens: 'Tokens',
-    time: 'Tempo',
-    collapse: 'Recolher',
-    expand: 'Expandir',
-    running: 'Rodando',
-    finished: 'Concluídos',
-    planned: 'Planejados',
-    empty: 'Nenhum subagente rodando agora.',
-    round: 'rodada',
-    failed: 'erro',
-    after: 'depois de',
-    tokensWord: 'tokens',
-    agentsCount: 'agentes',
-    isRunning: 'rodando',
-    isFinished: 'concluído',
-    isPlanned: 'planejada',
-    opened: 'Painel de agentes aberto.',
-    closed: 'Painel de agentes fechado.',
-    done: 'Pronto',
-    plan: 'Plano',
-    design: 'Design',
-    tasks: 'Tarefas',
-    review: 'Revisão',
-    busy: 'rodando',
-    sleep: 'dormindo',
-    sleepHint: 'esperando a próxima tarefa',
-    waitPermission: 'esperando sua permissão',
-    waitAnswer: 'esperando sua resposta',
-    think: 'pensando',
-    analyze: 'analisando',
-    work: 'trabalhando',
-    delegate: 'coordenando',
-    agentsN: (n: number) => `${n} ${n === 1 ? 'agente' : 'agentes'}`,
-    reading: 'lendo',
-    searching: 'buscando',
-    editing: 'editando',
-    running_: 'rodando',
-    browsing: 'pesquisando',
-    actionsN: (n: number) => `${n} ${n === 1 ? 'ação' : 'ações'}`,
-    thisTurn: 'Esta resposta',
-    today: 'Hoje',
-    month: 'Este mês',
-  },
-} as const
 
 // Module scope is fine here: session.start sets it again on every (re)load.
 let lang: Lang = 'en'
@@ -604,6 +465,8 @@ const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: num
     from,
     steps: f.total,
     gaps: spans.slice(1).map(sp => sp.f0),
+    // The tag stays on the group in progress: it starts no further left than that group does.
+    tagFloor: pct => (spans.find(sp => pct / 100 < sp.f1 - 1e-9) ?? spans[spans.length - 1])?.f0 ?? 0,
   })
   // Each group's name and count under its stretch.
   const names = spans.filter(sp => sp.name).map(sp => {
@@ -644,39 +507,151 @@ ${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
 
 // No flow running and Claude at work: the text stays at the left and the crab
 // walks sideways through the free part of the row, stops to do what Claude is
-// doing, and walks on. One loop of WALK_S seconds; `age` (ms since the scene
-// began) sets a negative delay, so a redraw picks the loop up where it was
-// instead of starting it over. Asleep, the crab keeps still (moodSvg).
+// doing, and walks on. One loop of WALK_S seconds; the scene's age sets a
+// negative delay, so a redraw picks the loop up where it was instead of
+// starting it over. Asleep, the crab keeps still (moodSvg).
 const WALK_S = 16
-const walkSvg = (W: number, mood: Mood, text: string, age: number, note = ''): string => {
-  const [head = text, ...rest] = text.split(' · ')
-  const tail = rest.length ? ' · ' + fitText(rest.join(' · '), 13, Math.max(40, W * 0.45)) : ''
+// The loop: where each stretch ends (share of the loop) and at which stop. Its
+// first stretch walks from stop 0 to stop 1.
+const LOOP: [number, number][] = [[0, 0], [0.14, 1], [0.5, 1], [0.62, 2], [0.86, 2], [1, 0]]
+const FIRST_MS = 0.14 * WALK_S * 1000
+// A new scene does not start the loop over: the crab runs from where it stands
+// straight to the new scene's stop 1, at a walking pace, and the loop carries on
+// from there. A new costume fades in as it sets off.
+const RUN_PX_S = 180
+const RUN_MIN_MS = 300
+const COSTUME_MS = 250
+
+type Walk = {
+  mood: Mood
+  /** When the scene began. */
+  at: number
+  /** The free part of the row it walks, and the row's width. */
+  lo: number
+  hi: number
+  W: number
+  /** Its three stops. */
+  xs: number[]
+  /** Where the crab was when the scene began, and how long its run from there to stop 1 takes. */
+  from: number
+  run: number
+  /** The costume changed: it fades in. */
+  fresh: boolean
+  /** Too little room to walk: it runs to the end of the free part and stays there, at its task. */
+  still?: boolean
+}
+
+// CSS's ease-in-out, as JS, to tell where the crab is between redraws.
+const easeInOut = (t: number): number => {
+  const at = (a: number, b: number, u: number) => 3 * a * u * (1 - u) ** 2 + 3 * b * u * u * (1 - u) + u ** 3
+  let lo = 0
+  let hi = 1
+  for (let k = 0; k < 24; k++) {
+    const mid = (lo + hi) / 2
+    if (at(0.42, 0.58, mid) < t) lo = mid
+    else hi = mid
+  }
+  const u = (lo + hi) / 2
+  return at(0, 1, u)
+}
+
+// How far into the loop the scene is at `age`: its run stands in for the
+// loop's first stretch, so the loop picks up at stop 1 when the run ends.
+const loopMs = (w: Walk, age: number): number => age - w.run + FIRST_MS
+
+/** Where the crab of scene `w` stands at `t`. */
+const walkX = (w: Walk, t: number): number => {
+  const age = Math.max(0, t - w.at)
+  const x1 = w.xs[1] ?? w.lo
+  if (age < w.run) return w.from + (x1 - w.from) * easeInOut(age / w.run)
+  const u = ((loopMs(w, age) / 1000) % WALK_S) / WALK_S
+  for (let k = 1; k < LOOP.length; k++) {
+    const [p1 = 0, s1 = 0] = LOOP[k] ?? []
+    const [p0 = 0, s0 = 0] = LOOP[k - 1] ?? []
+    if (u <= p1) {
+      const a = w.xs[s0] ?? x1
+      const b = w.xs[s1] ?? x1
+      return a + (b - a) * easeInOut(p1 > p0 ? (u - p0) / (p1 - p0) : 1)
+    }
+  }
+  return w.xs[0] ?? x1
+}
+
+// The row's text and note, and the free part of the row between them.
+const walkLayout = (W: number, text: string, note: string) => {
+  const [whole = text, ...rest] = text.split(' · ')
+  // The text never runs under the crab in its corner: past the room it ends in "…".
+  const room = Math.max(40, (W - CRAB_W - 30) / 1.04)
+  const head = fitText(whole, 13, room)
+  const left = room - textWidth(head, 13) - textWidth(' · ', 13)
+  const tail = rest.length && left > 30 ? ' · ' + fitText(rest.join(' · '), 13, Math.min(left, Math.max(40, W * 0.45))) : ''
   const lo = Math.round(textWidth(head + tail, 13) * 1.04 + 26)
   // The note only when the row has room for it and for the walk.
   const noteW = note ? Math.round(textWidth(note, 11.5)) + 12 : 0
   const side = noteW && W - noteW - CRAB_W - lo > 80 ? note : ''
   const hi = W - CRAB_W - 2 - (side ? noteW : 0)
+  return { head, tail, side, lo, hi }
+}
+
+/**
+ * The scene for this redraw: the same one while the mood, the row's width and
+ * the free part of the row allow; otherwise a new one that sets off from where
+ * the crab stands now, so it never jumps.
+ */
+// Less free room than this and the crab does not pace a little strip: it stays put.
+const WALK_ROOM = 80
+
+const nextWalk = (prev: Walk | null, W: number, mood: Mood, text: string, note: string, t: number): Walk => {
+  const { lo, hi } = walkLayout(W, text, note)
+  const still = hi - lo < WALK_ROOM
+  // Text that grew over its path, or a note that came in, makes room anew; shorter text keeps the walk
+  // going (a crab kept still by long text sets off again once there is room).
+  if (prev && prev.mood === mood && prev.W === W && lo <= prev.lo && hi >= prev.hi && !!prev.still === still) return prev
   // Where it stops: fixed per mood, so the same scene walks the same way.
   const seed = [...mood].reduce((n, ch) => n + ch.charCodeAt(0), 0)
-  const xs = [0.12, 0.6, 0.34].map((f, i) => Math.round(lo + Math.max(0, hi - lo) * ((f + noise(seed, i) * 0.3) % 1)))
-  const at = (pct: number, x: number | undefined) => `${pct}%{transform:translateX(${x ?? lo}px)}`
-  const key = [at(0, xs[0]), at(14, xs[1]), at(50, xs[1]), at(62, xs[2]), at(86, xs[2]), at(100, xs[0])].join('')
-  const delay = -((age / 1000) % WALK_S)
-  const run = (name: string, timing: string) => `animation:${name} ${WALK_S}s ${timing} infinite;animation-delay:${delay.toFixed(2)}s`
-  const css = `<style>.mv{${run('mv', 'ease-in-out')}}@keyframes mv{${key}}
-.wk{${run('wk', 'steps(1)')}}.st{${run('sto', 'steps(1)')}}
+  const xs = still ? [hi, hi, hi] : [0.12, 0.6, 0.34].map((f, i) => Math.round(lo + Math.max(0, hi - lo) * ((f + noise(seed, i) * 0.3) % 1)))
+  // The first scene has nowhere to come from: it starts at stop 0, as the loop does.
+  const from = prev ? Math.max(0, Math.min(W - CRAB_W, walkX(prev, t))) : (xs[0] ?? lo)
+  const far = Math.abs(from - (xs[1] ?? lo))
+  const run = far < 2 ? 0 : Math.round(Math.min(FIRST_MS, Math.max(RUN_MIN_MS, (far / RUN_PX_S) * 1000)))
+  return { mood, at: t, lo, hi, W, xs, from, run, fresh: !!prev && prev.mood !== mood, still }
+}
+
+// The crab standing still at `x` (in the bar's corner): the next walk sets off from there.
+const parked = (x: number, W: number, t: number): Walk => ({ mood: 'sleep', at: t, lo: x, hi: x, W, xs: [x, x, x], from: x, run: 0, fresh: false })
+
+const walkSvg = (W: number, w: Walk, text: string, t: number, note = ''): string => {
+  const { mood, xs } = w
+  const { head, tail, side, lo } = walkLayout(W, text, note)
+  const age = Math.max(0, t - w.at)
+  const at = (pct: number, i: number) => `${pct * 100}%{transform:translateX(${xs[i] ?? lo}px)}`
+  const key = LOOP.map(([pct, i]) => at(pct, i)).join('')
+  const loopDelay = -((loopMs(w, age) / 1000) % WALK_S)
+  const loop = (name: string, timing: string) => `${name} ${WALK_S}s ${timing} ${loopDelay.toFixed(2)}s infinite both`
+  // Running from where it stood: listed last, the run wins over the loop while it lasts,
+  // and the loop, in its first stretch meanwhile, has the legs walking.
+  const running = age < w.run
+  const x1 = xs[1] ?? lo
+  const css = `<style>.mv{animation:${loop('mv', 'ease-in-out')}${running ? `,rn ${w.run}ms ease-in-out ${-Math.round(age)}ms` : ''}}@keyframes mv{${key}}
+${running ? `@keyframes rn{from{transform:translateX(${Math.round(w.from)}px)}to{transform:translateX(${x1}px)}}
+.sr{animation:sro ${w.run}ms steps(1) ${-Math.round(age)}ms both}.si{animation:sri ${w.run}ms steps(1) ${-Math.round(age)}ms both}@keyframes sro{from{opacity:1}to{opacity:0}}@keyframes sri{from{opacity:0}to{opacity:1}}` : '.sr{opacity:0}'}
+${w.still
+    ? // Kept still: it walks only while it runs to its place, then stands at its task.
+      running ? `.wk{animation:sro ${w.run}ms steps(1) ${-Math.round(age)}ms both}.st{animation:sri ${w.run}ms steps(1) ${-Math.round(age)}ms both}` : '.wk{opacity:0}'
+    : `.wk{animation:${loop('wk', 'steps(1)')}}.st{animation:${loop('sto', 'steps(1)')}}`}
 @keyframes wk{0%{opacity:1}14%{opacity:0}50%{opacity:1}62%{opacity:0}86%{opacity:1}}@keyframes sto{0%{opacity:0}14%{opacity:1}50%{opacity:0}62%{opacity:1}86%{opacity:0}}
+${w.fresh ? `.cin{animation:cin ${COSTUME_MS}ms ease-out ${-Math.round(age)}ms both}@keyframes cin{from{opacity:0}}` : ''}
 /* walking: the same costume, its props still and only the legs stepping */
 .walk .la{animation:st .25s steps(1) infinite}.walk .lb{animation:st .25s steps(1) infinite -.125s}.walk .bd{animation:bob .25s steps(1) infinite -.06s}.walk g{transform-box:fill-box}
 /* the smoke behind it: one trail per stretch of the walk, shown only on that stretch */
 .smk{fill:#aeaaa1}@media (prefers-color-scheme: dark){.smk{fill:#9a978f}}
-.sm0{${run('sm0', 'steps(1)')}}.sm1{${run('sm1', 'steps(1)')}}.sm2{${run('sm2', 'steps(1)')}}
+.sm0{animation:${loop('sm0', 'steps(1)')}}.sm1{animation:${loop('sm1', 'steps(1)')}}.sm2{animation:${loop('sm2', 'steps(1)')}}
 @keyframes sm0{0%{opacity:1}14%{opacity:0}}@keyframes sm1{0%{opacity:0}50%{opacity:1}62%{opacity:0}}@keyframes sm2{0%{opacity:0}86%{opacity:1}}
 .pf{transform-box:fill-box;transform-origin:center;animation:.8s ease-out infinite}.pf1{animation-delay:-.2s}.pf2{animation-delay:-.4s}.pf3{animation-delay:-.6s}
 .pr .pf{animation-name:pfr}.pl .pf{animation-name:pfl}
 @keyframes pfr{from{transform:translate(0,0) scale(.6);opacity:1}to{transform:translate(-14px,-5px) scale(1.8);opacity:0}}
 @keyframes pfl{from{transform:translate(0,0) scale(.6);opacity:1}to{transform:translate(14px,-5px) scale(1.8);opacity:0}}
-@media (prefers-reduced-motion: reduce){.mv,.wk,.st,.walk .la,.walk .lb,.walk .bd{animation:none}.wk,.sm0,.sm1,.sm2{opacity:0}}</style>`
+@media (prefers-reduced-motion: reduce){.mv,.wk,.st,.cin,.walk .la,.walk .lb,.walk .bd{animation:none}.wk,.sm0,.sm1,.sm2,.sr{opacity:0}}</style>`
   const costume = 'm-' + mood
   // Walking it wears what it wears when it stops, so nothing comes off on the way.
   const walking = crab(0, 0, costume, false, false, 0.9).replace(`class="c-${costume}"`, `class="c-${costume} walk"`)
@@ -687,13 +662,15 @@ const walkSvg = (W: number, mood: Mood, text: string, age: number, note = ''): s
     const right = to >= from
     return `<g class="sm${i} ${right ? 'pr' : 'pl'}" transform="translate(${right ? -3 : CW - 3}, ${H - 10})">${[0, 1, 2, 3].map(puff).join('')}</g>`
   }
-  const [x0 = lo, x1 = lo, x2 = lo] = xs
-  const smoke = `${trail(0, x0, x1)}${trail(1, x1, x2)}${trail(2, x2, x0)}`
+  const [x0 = lo, x2 = lo] = [xs[0], xs[2]]
+  // While it runs in from where it stood, its own trail; the loop's trails after that.
+  // A short hop raises no dust; a crab kept still leaves no loop trails.
+  const smoke = `<g class="sr">${Math.abs(w.from - x1) < 20 ? '' : trail(3, w.from, x1)}</g><g class="si">${w.still ? '' : `${trail(0, x0, x1)}${trail(1, x1, x2)}${trail(2, x2, x0)}`}</g>`
   return `<svg xmlns="http://www.w3.org/2000/svg" data-walk="${mood}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <style>.t{fill:#1f1f1f}.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>${CRAB_CSS}${css}
 <text x="0" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(head)}</tspan><tspan class="m">${xml(tail)}</tspan></text>
 ${side ? `<text class="m" x="${W}" y="${H / 2 + 4}" text-anchor="end" font-family="${FONT}" font-size="11.5" font-variant-numeric="tabular-nums">${xml(side)}</text>` : ''}
-<g class="mv">${smoke}<g class="wk">${walking}</g><g class="st">${crab(0, 0, costume, false, true, 0.9)}</g></g></svg>`
+<g class="mv">${smoke}<g class="cin"><g class="wk">${walking}</g><g class="st">${crab(0, 0, costume, false, true, 0.9)}</g></g></g></svg>`
 }
 
 // Claude waiting on the person (a permission, a question): the row turns
@@ -742,6 +719,7 @@ const TIER_COLOR: Record<string, string> = {
   medium: '#378ADD',
   light: '#1D9E75',
   other: '#888780',
+  plan: '#2F6DB5',
 }
 
 // A bar that shows the context rather than progress.
@@ -975,18 +953,39 @@ async function loadPortraits($: EngineInterface): Promise<void> {
   if (problems.length) $.ui.toast(`crabhud: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? ` (+${problems.length - 3})` : ''}`)
 }
 
+// The workers' clothes, on the body between the eyes (y 15) and the legs (y 21),
+// sixteen columns wide: a row per line, a letter per pixel, `t` the tier's colour.
+const OUTFIT: Record<string, (f: Fill, t: string) => void> = {
+  // Astronaut: white suit, a chest panel with lights, the mission patch in the tier's colour.
+  fable: (f, t) => stamp(f, 7, 16, ['ssssssssssssssss', 'sssgggggssssttss', 'sssgrybgssssttss', 'sssgggggssssssss', 'gggggggggggggggg', 'ssssssssssssssss'], { s: '#ECEEF2', g: '#B9BDC6', r: '#E5484D', y: '#F5C542', b: '#4CA3F0', t }),
+  // Detective: khaki trench coat with lapels, white shirt, a tie in the tier's colour, a belt.
+  heavy: (f, t) => stamp(f, 7, 15, ['cccdwwwttwwwdccc', 'ccccdwwttwwdcccc', 'cccccdwttwdccccc', 'ccccccdttdcccccc', 'bbbbbbbkkbbbbbbb', 'cccccccdcccccccc', 'cccccccdcccccccc'], { c: '#C9A66B', d: '#9C7A44', w: '#F8F6F1', t, b: '#7A5A2E', k: '#E8C25A' }),
+  // Engineer: lime hi-vis vest with silver stripes and a tool belt.
+  careful: (f, t) => stamp(f, 7, 16, ['vvvvv......vvvvv', 'vvvvvv....vvvvvv', 'ssssss....ssssss', 'vvvvvv....vvvvvv', 'bbbbbbbbbbbbbbbb', '..pp........tt..'], { v: '#C6DA3A', s: '#E6E8EE', b: '#6B4A2A', p: '#8B6238', t }),
+  // Chef: double-breasted white jacket, a neckerchief in the tier's colour.
+  medium: (f, t) => stamp(f, 7, 15, ['......tttt......', 'wwwwwwwttwwwwwww', 'wwwwkwwwwgwkwwww', 'wwwwwwwwwgwwwwww', 'wwwwkwwwwgwkwwww', 'wwwwwwwwwgwwwwww', 'wwwwkwwwwgwkwwww'], { w: '#F4F3EE', g: '#D2D1C8', k: '#3A3A3C', t }),
+  // Racer: a suit in the tier's colour with the helmet's white stripes, a number and a sponsor patch.
+  light: (f, t) => stamp(f, 7, 16, ['rrwwwrrwwrrrrrrr', 'rwwkwwrwwrrryyrr', 'rwwkwwrwwrrryyrr', 'rrwwwrrwwrrrrrrr', 'dddddddddddddddd', 'rrrrrrrwwrrrrrrr'], { r: t, w: '#F8F6F1', k: INK, y: '#F5C542', d: '#137A5A' }),
+  // Pirate: striped shirt under a dark open vest, a gold buckle, navy trousers.
+  explore: f => stamp(f, 7, 15, ['vvvv........vvvv', 'vvvvwwwwwwwwvvvv', 'vvvvrrrrrrrrvvvv', 'vvvvwwwwwwwwvvvv', 'bbbbbbbggbbbbbbb', 'pppppppppppppppp', 'pppppppppppppppp'], { v: '#3A2A1E', w: '#F8F6F1', r: '#C0392B', b: '#5A3519', g: '#F5C542', p: '#2F3E5C' }),
+  // Handyman (general-purpose and any other agent): denim overalls with straps, buttons and a pocket.
+  other: f => stamp(f, 7, 15, ['.j............j.', '.j...jjjjjj...j.', '..jjjjyjjyjjjj..', '..jjjjjppjjjjj..', 'jjjjjjjppjjjjjjj', 'jjjjjjjdjjjjjjjj', 'jjjjjjjdjjjjjjjj'], { j: '#3F6FA8', d: '#2E5585', y: '#F5C542', p: '#5584C0' }),
+  // Architect (Plan): light-blue shirt, navy tie, dark trousers.
+  plan: f => stamp(f, 7, 15, ['bbbbbbbkkbbbbbbb', 'bbbbbbbkkbbbbbbb', 'bpppbbbkkbbbbbbb', 'bpppbbbkkbbbbbbb', 'bbbbbbbkkbbbbbbb', 'nnnnnnnnnnnnnnnn', 'nnnnnnnnnnnnnnnn'], { b: '#CFE3F7', k: '#22315A', p: '#9CB9DA', n: '#3A3A3C' }),
+}
+
 const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
   // Fable: astronaut in a glass dome; floats instead of walking, the antenna and the star blink.
   fable: (f, t) => {
-    crabBody(f)
+    crabBody(f); OUTFIT.fable?.(f, t)
     f(6, 7, 18, 1, '#E6E8EE'); f(5, 8, 1, 14, '#E6E8EE'); f(24, 8, 1, 14, '#E6E8EE'); f(6, 22, 18, 1, '#C9CCD2')
     f(6, 8, 18, 14, 'rgba(169,214,245,.32)'); f(8, 9, 2, 1, '#fff'); f(8, 10, 1, 2, '#fff')
-    f(14, 4, 2, 3, '#C9CCD2'); f(14, 2, 2, 2, t, 'ant'); f(13, 18, 4, 2, t)
+    f(14, 4, 2, 3, '#C9CCD2'); f(14, 2, 2, 2, t, 'ant')
     f(27, 3, 1, 3, '#F5C542', 'star'); f(26, 4, 3, 1, '#F5C542', 'star')
   },
   // Heavy: detective with a deerstalker; the magnifier sweeps and glints.
   heavy: (f, t) => {
-    crabBody(f, -4, 'it')
+    crabBody(f, -4, 'it'); OUTFIT.heavy?.(f, t)
     stamp(f, 6, 3, ['......bbbbbb......', '....bbcbbcbbbb....', '...bbbbbbbbbbbb...', '..bcbbcbbcbbcbbb..', '.bbbbbbbbbbbbbbbb.', 'dddddddddddddddddd'], { b: '#7A4A26', c: '#A0703F', d: '#5A3519' })
     f(6, 9, 18, 1, t)
     stamp(f, 23, 1, ['.kkk.', 'k...k', 'k...k', 'k...k', '.kkk.'], { k: '#3A3A3C' }, 'it')
@@ -994,27 +993,27 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
   },
   // Careful: engineer in a hard hat; the wrench turns a bolt.
   careful: (f, t) => {
-    crabBody(f)
+    crabBody(f); OUTFIT.careful?.(f, t)
     stamp(f, 6, 4, ['.....yyyyyyyy.....', '...yyyyyhhyyyyy...', '..yyyyyyhhyyyyyy..', '..yyyyyyhhyyyyyy..', '.yyyyyyyhhyyyyyyy.', 'dddddddddddddddddd'], { y: '#F5C542', h: '#FBE08A', d: '#C99A1E' })
     f(13, 5, 4, 2, t)
     stamp(f, 0, 10, ['.s.s', 'sss.', '.s..', '.s..'], { s: '#8E929A' }, 'it')
   },
   // Medium: chef, the toque traced from DockCrab's Sprites.chefHat; tosses the omelette.
   medium: (f, t) => {
-    crabBody(f, -4, 'pan')
+    crabBody(f, -4, 'pan'); OUTFIT.medium?.(f, t)
     stamp(f, 6, 0, ['........lll.......', '.......lllll......', '.wwwwgwwwwwwgwwwww', 'wwwwwwwwwwwwwwwwww', 'wwwwwwwwwwwwwwwwww', 'wwwwwgwwwwwggwwwww', '.wwwwgwwwwwggwwwww', '.dddbbbbbbbbbbbbb.', '.dddbbbbbbbbbbbbb.', '.dddbbbbbbbbbbbbb.'], { w: '#F4F3EE', l: '#F7F6F2', g: '#D2D1C8', b: t, d: '#B45F43' })
     f(22, 8, 7, 2, '#4A4A48', 'pan'); f(26, 10, 1, 1, '#4A4A48', 'pan'); f(24, 7, 3, 1, '#F5B731', 'egg')
   },
   // Light: racer in a helmet; runs at double pace, the checkered flag flutters.
   light: (f, t) => {
-    crabBody(f, -4)
+    crabBody(f, -4); OUTFIT.light?.(f, t)
     stamp(f, 6, 5, ['....rrrrrrrrrr....', '..rrrrrrwwrrrrrr..', '.rrrrrrrwwrrrrrrr.', '.rrrrrrrwwrrrrrrr.', '.rrrrrrrwwrrrrrrr.', '.kkkkkkkkkkkkkkkkr'], { r: t, w: '#F8F6F1', k: INK })
     f(25, 1, 1, 9, '#8E929A')
     stamp(f, 26, 1, ['wkwk', 'kwkw', 'wkwk'], { w: '#F8F6F1', k: INK }, 'flag')
   },
   // Explore: pirate scouting the code; the cutlass fences.
-  explore: f => {
-    crabBody(f)
+  explore: (f, t) => {
+    crabBody(f); OUTFIT.explore?.(f, t)
     stamp(f, 5, 3, ['.kk..............kk.', '.kkk....kkkk....kkk.', '..kkkkkkkwwkkkkkkk..', '..kkkkkkkkkkkkkkkk..', '.gggggggggggggggggg.'], { k: '#55514C', w: '#F8F6F1', g: '#F5C542' })
     f(7, 11, 11, 1, INK); f(18, 11, 4, 3, INK)
     f(27, 6, 1, 9, '#C9CCD2', 'it'); f(26, 15, 3, 1, '#7A4A26', 'it')
@@ -1058,11 +1057,20 @@ const COSTUMES: Record<string, (f: Fill, t: string) => void> = {
     f(23, 8, 3, 3, '#D97757'); f(25, 7, 2, 5, '#E6E8EE'); f(27, 5, 2, 9, '#E6E8EE')
     f(29, 6, 1, 1, '#8f8cf4', 'w1'); f(29, 9, 1, 1, '#8f8cf4', 'w2'); f(29, 12, 1, 1, '#8f8cf4', 'w1')
   },
-  other: f => crabBody(f),
+  // Any other agent: the handyman in overalls.
+  other: (f, t) => {
+    crabBody(f); OUTFIT.other?.(f, t)
+  },
+  // Plan: the architect, round glasses and a rolled blueprint in the claw.
+  plan: (f, t) => {
+    crabBody(f, -4, 'it'); OUTFIT.plan?.(f, t)
+    stamp(f, 8, 11, ['kkkk.....kkkk', 'k..kkkkkkk..k', 'kkkk.....kkkk'], { k: '#3A3A3C' })
+    f(22, 6, 7, 3, '#2F6DB5', 'it'); f(23, 7, 5, 1, '#CFE3F7', 'it'); f(28, 6, 1, 3, '#245394', 'it')
+  },
 }
 
 const costumeOf = (type: string): string =>
-  type === 'Explore' ? 'explore' : (portraitFor(portraits, type) ?? tierOf(type))
+  type === 'Explore' ? 'explore' : type === 'Plan' ? 'plan' : (portraitFor(portraits, type) ?? tierOf(type))
 
 const CRAB_SCALE = 1.1
 
@@ -1084,7 +1092,8 @@ const crab = (x: number, y: number, costume: string, dim = false, isWalking = fa
   const props = [...groups.keys()].filter(k => k !== 'bd' && k !== 'la' && k !== 'lb' && !isFront(k))
   const front = [...groups.keys()].filter(isFront)
   const body = `<g class="bd">${(groups.get('bd') ?? []).join('')}${props.map(group).join('')}</g>`
-  return `<g transform="translate(${x},${y}) scale(${scale})" opacity="${dim ? 0.45 : 1}" shape-rendering="crispEdges"><g class="c-${costume}${isWalking ? ' run' : ''}">${body}${group('la')}${group('lb')}${front.map(group).join('')}</g></g>`
+  // The legs go first, so a coat or an apron hangs over them.
+  return `<g transform="translate(${x},${y}) scale(${scale})" opacity="${dim ? 0.45 : 1}" shape-rendering="crispEdges"><g class="c-${costume}${isWalking ? ' run' : ''}">${group('la')}${group('lb')}${body}${front.map(group).join('')}</g></g>`
 }
 
 const statusMark = (x: number, y: number, status: string, color: string): string => {
@@ -1219,6 +1228,27 @@ ${barSvg({ style, x: 42, y: 54, w: barW, h: 8, p: (progress ?? ctx / 100) * 100,
 ${statusMark(W - 8, 16, a.status, color)}
 <line class="ln" x1="0" y1="65.5" x2="${W}" y2="65.5"/>`,
     ` data-style="${style}"`,
+  )
+}
+
+// A card that finished well over a minute ago shrinks to one line: a small crab, the name,
+// the cost and the time, and the check. Failed ones keep the full card, so they stay seen.
+const SHRINK_MS = 60_000
+const isShrunk = (a: AgentRun, at: number): boolean => a.status === 'done' && a.endedAt !== undefined && at - a.endedAt > SHRINK_MS
+const SHRUNK_H = 26
+
+const shrunkSvg = (W: number, a: AgentRun, at: number): string => {
+  const stats = `≈${fmtCost(a.costUsd)}  ${fmtTime(elapsed(a, at))}`
+  const right = W - 22
+  const textW = Math.max(20, right - 30 - textWidth(stats, 11) - 10)
+  return svg(
+    W,
+    SHRUNK_H,
+    `${crab(6, 5, costumeOf(a.type), true, false, 0.5)}
+<text class="t" x="30" y="17" font-family="${FONT}" font-size="12" opacity=".8">${xml(fitText(a.description || a.type, 12, textW))}</text>
+<text class="s" x="${right}" y="17" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${stats}</text>
+${statusMark(W - 8, 13, a.status, colorOf(costumeOf(a.type)))}
+<line class="ln" x1="0" y1="${SHRUNK_H - 0.5}" x2="${W}" y2="${SHRUNK_H - 0.5}"/>`,
   )
 }
 
@@ -1534,7 +1564,7 @@ async function startDemo($: EngineInterface): Promise<void> {
   const agent = (i: number, type: string, model: string): AgentRun => ({
     id: `demo-${i}`,
     type,
-    description: D.agents[i],
+    description: D.agents[i] ?? '',
     model,
     status: 'running',
     startedAt: at + 3000,
@@ -1891,9 +1921,13 @@ const registerProgress: Register = on => {
           ))}
           {finished.length > 0 && toggleDone}
           {!p.isDoneCollapsed &&
-            finished.map(a => (
-              <Svg key={a.id} source={agentSvg(W, a, at, styles.desktop)} alt={`${a.description}: ${modelName(a.model)}, ${s.isFinished}`} width={W} height={66} />
-            ))}
+            finished.map(a =>
+              isShrunk(a, at) ? (
+                <Svg key={a.id} source={shrunkSvg(W, a, at)} alt={`${a.description}: ${s.isFinished}, ≈${fmtCost(a.costUsd)}`} width={W} height={SHRUNK_H} />
+              ) : (
+                <Svg key={a.id} source={agentSvg(W, a, at, styles.desktop)} alt={`${a.description}: ${modelName(a.model)}, ${s.isFinished}`} width={W} height={66} />
+              ),
+            )}
           {planned.length > 0 && section('h-plan', `${s.planned} · ${planned.length}`)}
           {planned.map(pl => (
             <Svg key={`plan-${pl.n}`} source={plannedSvg(W, pl)} alt={`${pl.n}. ${pl.title}: ${s.isPlanned}`} width={W} height={46} />
@@ -1906,6 +1940,18 @@ const registerProgress: Register = on => {
     const cols = Math.max(24, e.props.bodyColumns || 40)
     const barW = Math.max(6, Math.min(20, cols - 34))
     const row = (a: AgentRun) => {
+      if (isShrunk(a, at))
+        return (
+          <Box key={a.id} flexDirection="row" gap={1}>
+            <Text dimColor wrap="truncate-end">
+              {a.description || a.type}
+            </Text>
+            <Text color="green">{STATUS_GLYPH.done}</Text>
+            <Text dimColor>
+              ≈{fmtCost(a.costUsd)} {fmtTime(elapsed(a, at))}
+            </Text>
+          </Box>
+        )
       const tier = tierOf(a.type)
       const color = colorOf(costumeOf(a.type))
       const ctx = ctxOf(a)
@@ -1997,9 +2043,11 @@ const registerProgress: Register = on => {
   // (a mode that settles it at once never shows a prompt), the row turns amber.
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
-    const id = e.tool_use_id
+    const detail = targetOf((e.input ?? {}) as Record<string, unknown>)
+    // A query carries no id: the call in flight for the same tool and target is the one asked about.
+    const id = e.tool_use_id ?? [...inFlight].find(([, key]) => key === `${e.tool}\n${detail}`)?.[0]
     if (verdict?.decision === 'ask' && id) {
-      const w: Waiting = { kind: 'permission', tool: e.tool, detail: targetOf((e.input ?? {}) as Record<string, unknown>), id }
+      const w: Waiting = { kind: 'permission', tool: e.tool, detail, id }
       $.clock.after(ASK_DELAY_MS, () => {
         if (inFlight.has(id)) void startWaiting($, w)
       })
@@ -2012,7 +2060,7 @@ const registerProgress: Register = on => {
   // in the corner acts out.
   on('tool.call', async ($, e, next) => {
     const id = e.tool_use_id
-    if (id) inFlight.add(id)
+    if (id) inFlight.set(id, `${e.tool}\n${targetOf(e as unknown as Record<string, unknown>)}`)
     try {
       if (e.tool === 'AskUserQuestion' && id) {
         const qs = (e as unknown as { questions?: { question?: unknown }[] }).questions
@@ -2093,7 +2141,6 @@ const registerProgress: Register = on => {
       </Text>
     )
     const t = await $.clock.now()
-    if (scene.mood !== mood) scene = { mood, at: t }
     // The turn so far, beside the walking crab: how many tools, how long. Reading
     // `now` redraws the row as the clock ticks.
     await read($, now)
@@ -2101,11 +2148,15 @@ const registerProgress: Register = on => {
     const note = e.props.isWorking && turn && turn.endedAt === undefined ? `${tr().actionsN(turn.actions)} · ${fmtSpan(t - turn.startedAt)}` : ''
 
     if (f === null) {
-      if (waitRow) return above(waitRow)
+      if (waitRow) {
+        walk = null
+        return above(waitRow)
+      }
       if (vector) {
         const { Svg } = ui
         // At work the crab walks the free part of the row; asleep it keeps still.
-        const art = mood === 'sleep' ? moodSvg(width, mood, status) : walkSvg(width, mood, status, t - scene.at, note)
+        walk = mood === 'sleep' ? null : nextWalk(walk, width, mood, status, note, t)
+        const art = walk ? walkSvg(width, walk, status, t, note) : moodSvg(width, mood, status)
         return above(
           <Box flexDirection="row" alignItems="center" gap={1}>
             <Svg source={art} alt={status} width={width} height={H} />
@@ -2125,6 +2176,8 @@ const registerProgress: Register = on => {
       )
     }
 
+    // The bar's crab sits in its corner; when the bar goes, the walk sets off from there.
+    walk = parked(width - CRAB_W + 1, width, t)
     const percent = `${Math.round(ratio(f) * 100)}%`
     const dismiss = (
       <Button
@@ -2199,6 +2252,8 @@ const modelA = atom({ plugin: 'crabhud', key: 'model' } as const, '')
 const effortA = atom({ plugin: 'crabhud', key: 'effort' } as const, null)
 const ultraA = atom({ plugin: 'crabhud', key: 'ultracode' } as const, false)
 const expandedA = atom({ plugin: 'crabhud', key: 'expanded' } as const, false)
+// /crabhud budget: past this many dollars the chat's cost turns amber (null: none).
+const budgetA = atom({ plugin: 'crabhud', key: 'budget' } as const, null as number | null)
 const hiddenA = atom({ plugin: 'crabhud', key: 'hidden' } as const, false)
 const alertedA = atom({ plugin: 'crabhud', key: 'alerted' } as const, [])
 // The HUD's language; null until the person picks one on the first run.
@@ -2209,98 +2264,13 @@ const styleA = atom({ plugin: 'crabhud', key: 'style' } as const, DEFAULT_STYLES
 // Every 30 s: the app's HUD reads it, so its reset countdowns stay current.
 const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
 const STYLE_PANE = 'crabhud-style'
+// The picker's keys, one per style: the digits, then letters past nine.
+const STYLE_KEYS = '123456789abcdefg'.slice(0, STYLES.length).split('')
+const STYLE_KEYS_HELP = STYLE_KEYS.length > 9 ? `1–9, ${STYLE_KEYS.slice(9).join(', ')}` : STYLE_KEYS.join('/')
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
-const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), see everything as text (status) or watch a demo (demo)'
+const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), set a budget for the chat (budget), see everything as text (status) or watch a demo (demo)'
 
-const TEXT = {
-  en: {
-    hidden: 'HUD hidden. Use /crabhud on to show it again.',
-    shown: 'HUD shown.',
-    sound: (isOn: boolean) => (isOn ? 'Sounds on: a chime when Claude waits for you, when it finishes, and a little fanfare when a bar reaches 100%.' : 'Sounds off.'),
-    language: (name: string) => `HUD language: ${name}.`,
-    style: (name: string) => `HUD style: ${name}.`,
-    noStyle: (name: string, all: string) => `No style "${name}". Pick one of: ${all}.`,
-    pickTitle: 'HUD style',
-    pickHelp: (keys: string) => `Press ${keys} to choose · Esc to close`,
-    pickNow: '← now',
-    context: 'Context',
-    limit: { five_hour: '5-hour limit', seven_day: '7-day limit', spend_limit: 'Spend limit' } as Record<string, string>,
-    resets: (t: string) => ` (resets in ${t})`,
-    at: (p: number) => ` at ${p}%`,
-    now: 'now',
-    status: {
-      head: 'crabhud · status',
-      model: 'Model',
-      effort: 'effort',
-      context: 'Context',
-      of: 'of',
-      chat: 'This chat',
-      bar: 'Bar',
-      noBar: 'none now',
-      ofSteps: (d: number, t: number) => `${d} of ${t}`,
-      finished: 'finished',
-      agents: 'Agents',
-      noAgents: 'none yet',
-      running: 'running',
-      done: 'finished',
-      planned: 'planned',
-      look: 'Style',
-      inApp: 'in the app',
-      inTerminal: 'in the terminal',
-      soundOn: 'sounds on',
-      soundOff: 'sounds off',
-      language: 'language',
-      noLimits: 'Limits: no reading yet',
-      hidden: 'The HUD is hidden (/crabhud on shows it).',
-    },
-    demo: 'Demo: 20 seconds of sample bars, agents and limits. Nothing real changes.',
-    demoOff: 'Demo stopped.',
-  },
-  'pt-BR': {
-    hidden: 'HUD escondido. Use /crabhud on para mostrar.',
-    shown: 'HUD visível.',
-    sound: (isOn: boolean) => (isOn ? 'Sons ligados: um toque quando o Claude espera você, quando termina, e uma fanfarra quando a barra chega a 100%.' : 'Sons desligados.'),
-    language: (name: string) => `Idioma do HUD: ${name}.`,
-    style: (name: string) => `Estilo do HUD: ${name}.`,
-    noStyle: (name: string, all: string) => `Não há o estilo "${name}". Escolha um destes: ${all}.`,
-    pickTitle: 'Estilo do HUD',
-    pickHelp: (keys: string) => `Tecle ${keys} para escolher · Esc para fechar`,
-    pickNow: '← atual',
-    context: 'Contexto',
-    limit: { five_hour: 'Limite de 5h', seven_day: 'Limite de 7 dias', spend_limit: 'Limite de gasto' } as Record<string, string>,
-    resets: (t: string) => ` (reseta em ${t})`,
-    at: (p: number) => ` em ${p}%`,
-    now: 'agora',
-    status: {
-      head: 'crabhud · resumo',
-      model: 'Modelo',
-      effort: 'esforço',
-      context: 'Contexto',
-      of: 'de',
-      chat: 'Este chat',
-      bar: 'Barra',
-      noBar: 'nenhuma agora',
-      ofSteps: (d: number, t: number) => `${d} de ${t}`,
-      finished: 'concluída',
-      agents: 'Agentes',
-      noAgents: 'nenhum ainda',
-      running: 'rodando',
-      done: 'terminados',
-      planned: 'planejados',
-      look: 'Estilo',
-      inApp: 'no app',
-      inTerminal: 'no terminal',
-      soundOn: 'sons ligados',
-      soundOff: 'sons desligados',
-      language: 'idioma',
-      noLimits: 'Limites: sem leitura ainda',
-      hidden: 'O HUD está escondido (/crabhud on mostra).',
-    },
-    demo: 'Demonstração: 20 segundos de barras, agentes e limites de exemplo. Nada de verdade muda.',
-    demoOff: 'Demonstração encerrada.',
-  },
-}
 
 // The window autocompaction measures against, as /context shows it: the
 // person's autoCompactWindow (the app's setting, settings.json or the
@@ -2340,8 +2310,9 @@ function prettyModel(id: string): string {
   const clean = id.replace(/\[.*?\]/g, '').trim()
   const m = /(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)/i.exec(clean)
   if (!m) return clean
-  const name = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
-  return `${name} ${m[2]}${m[3] ? `.${m[3]}` : ''}`
+  const [, family = '', major = '', minor] = m
+  const name = family.charAt(0).toUpperCase() + family.slice(1).toLowerCase()
+  return `${name} ${major}${minor ? `.${minor}` : ''}`
 }
 
 function fmtLeft(ms: number, now: string): string {
@@ -2595,8 +2566,9 @@ async function effortFromHistory($: EngineInterface): Promise<void> {
   for (let i = rows.length - 1; i >= 0; i--) {
     // Only rows of the session's own making, never the model's words or a
     // tool's output (a file that quotes such a line).
-    if (rows[i].role === 'assistant' || rows[i].toolResults?.length) continue
-    if (await applyEffortLine($, JSON.stringify(rows[i]))) return
+    const row = rows[i]
+    if (!row || row.role === 'assistant' || row.toolResults?.length) continue
+    if (await applyEffortLine($, JSON.stringify(row))) return
   }
 }
 
@@ -2755,13 +2727,15 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
 async function hudStart($: EngineInterface): Promise<void> {
   await $.command.register({ name: 'crabhud', description: COMMAND })
 
-  const [savedExpanded, savedHidden, lang, savedStyle, savedSound] = await Promise.all([
+  const [savedExpanded, savedHidden, lang, savedStyle, savedSound, savedBudget] = await Promise.all([
     $.store.get('expanded'),
     $.store.get('hidden'),
     loadLanguage($),
     $.store.get('style'),
     $.store.get('sound'),
+    $.store.get('budget'),
   ])
+  if (typeof savedBudget === 'number' && savedBudget > 0) await update($, budgetA, () => savedBudget)
   if (typeof savedExpanded === 'boolean') await update($, expandedA, () => savedExpanded)
   const saved = (savedStyle ?? {}) as Partial<Record<keyof HudStyles, unknown>>
   await update($, styleA, () => ({
@@ -2905,7 +2879,7 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
           key={`style-${style}`}
           label={STYLE_NAMES[style]}
           plain
-          hotkey={String(i + 1)}
+          hotkey={STYLE_KEYS[i] ?? String(i + 1)}
           onPress={async press => {
             const cur = await read($, styleA)
             const where = press.surface === 'desktop' ? 'desktop' : 'terminal'
@@ -2927,7 +2901,7 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
   return (
     <Box flexDirection="column" rowGap={e.surface === 'desktop' ? 1 : 0}>
       {rows}
-      <Text dimColor>{T.pickHelp(STYLES.map((_, i) => i + 1).join('/'))}</Text>
+      <Text dimColor>{T.pickHelp(STYLE_KEYS_HELP)}</Text>
     </Box>
   )
 }
@@ -2970,7 +2944,8 @@ async function statusText($: EngineInterface): Promise<string> {
     lines.push(`${T.limit[l.kind] ?? l.kind}: ${parts.join(' · ')}`)
   }
   const { today, month } = spendNow(days, t)
-  lines.push(`${S.chat}: ≈${fmtCost(chat?.costUsd ?? 0)} · ${tr().today} ≈${fmtCost(today)} · ${tr().month} ≈${fmtCost(month)}`)
+  const budget = await read($, budgetA)
+  lines.push(`${S.chat}: ≈${fmtCost(chat?.costUsd ?? 0)}${budget != null ? ` (${S.budget} ${fmtCost(budget)})` : ''} · ${tr().today} ≈${fmtCost(today)} · ${tr().month} ≈${fmtCost(month)}`)
   if (f) {
     const step = !f.isFinished && currentStep(f) ? ` · ${currentStep(f)}` : ''
     lines.push(`${S.bar}: ${f.title} · ${f.isFinished ? S.finished : S.ofSteps(f.done, f.total)}${step}`)
@@ -3033,6 +3008,15 @@ const registerHud: Register = on => {
       if (style === null) return { text: T.noStyle(value, STYLES.join(', ')) }
       await setStyle($, { terminal: style, desktop: style })
       return { text: T.style(STYLE_NAMES[style]) }
+    }
+    if (/^budget$/i.test(arg)) {
+      // `/crabhud budget 10` sets it (dollars, for this chat's cost); `off` or a bare `budget` clears it.
+      const T = TEXT[(await read($, langA)) ?? 'en']
+      const usd = !value || /^(off|none|0)$/i.test(value) ? null : Number(value.replace(/^\$/, '').replace(',', '.'))
+      if (usd !== null && !(Number.isFinite(usd) && usd > 0)) return { text: T.noBudget(value) }
+      await update($, budgetA, () => usd)
+      await $.store.set('budget', usd)
+      return { text: T.budget(usd) }
     }
     if (/^sounds?$/i.test(arg)) {
       // `/crabhud sound on` or `off`; a bare `/crabhud sound` flips it.
@@ -3115,7 +3099,9 @@ const registerHud: Register = on => {
       working: e.props.isWorking,
       expanded: await read($, expandedA),
       now: await $.clock.now(),
+      budget: await read($, budgetA),
     }
+    props.spend = spendNow(await read($, spendA), props.now)
 
     // The app: the hook draws the HUD as one SVG (bars in the picked style,
     // the spinner and Ultracode's wave in CSS), with ▾/▴ beside it to open

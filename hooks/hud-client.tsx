@@ -2,7 +2,7 @@ import type { ClientModule, RenderElement } from 'claude-code'
 
 import type { HudLimit, HudProps } from '../types'
 import { barCells, mergeCells } from './bar-styles'
-import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pace, pctText, tone, CYCLE_S, cycleAt } from './hud-words'
+import { AMBER, EFFORT_COLOR, GREEN, ORANGE, PURPLE, RED, WORDS, fmtLeft, fmtTok, pace, pctText, tone, CYCLE_S, cycleAt, overBudget, spendLine, SWAP_MS } from './hud-words'
 
 type State = { open: boolean; frame: number; refresh: number }
 type Seg = { t: string; c?: string; dim?: boolean; bold?: boolean }
@@ -54,8 +54,8 @@ function shimmer(row: number, cols: number, t: number): number[] {
 // colour of each step (1-3) of the wave behind the band at column `i`.
 type Theme = { flow: readonly string[]; wave: (step: number, i: number, t: number, desktop: boolean) => string }
 
-const PURPLE_WAVE = (step: number, _i: number, _t: number, desktop: boolean) =>
-  desktop ? PURPLE + ['62', '3D', '52'][step - 1] : ['#544D80', '#433D66', '#544D80'][step - 1]
+const PURPLE_WAVE = (step: number, _i: number, _t: number, desktop: boolean): string =>
+  desktop ? PURPLE + (['62', '3D', '52'][step - 1] ?? '52') : (['#544D80', '#433D66', '#544D80'][step - 1] ?? '#544D80')
 const RAINBOW = ['#F25F8B', '#F08A4B', '#E9C46A', '#3FB68B', '#5AA9E6', '#8B83E6', '#C86DD7']
 const RAINBOW_DIM = ['#5C2A3A', '#5A3A24', '#57502C', '#1F4A3A', '#24405A', '#3A3560', '#4E2D55']
 
@@ -66,9 +66,9 @@ const THEMES = {
   xhigh: { flow: ['#6E64D8', '#8B83E6', '#A58BEB', '#BBA8F2', '#A58BEB', '#8B83E6'], wave: PURPLE_WAVE },
   max: {
     flow: RAINBOW,
-    wave: (_step: number, i: number, t: number, desktop: boolean) => {
+    wave: (_step: number, i: number, t: number, desktop: boolean): string => {
       const k = Math.floor(i / 4 + t / 3) % RAINBOW.length
-      return desktop ? RAINBOW[k] + '55' : RAINBOW_DIM[k]
+      return desktop ? (RAINBOW[k] ?? PURPLE) + '55' : (RAINBOW_DIM[k] ?? '#3A3560')
     },
   },
 } satisfies Record<string, Theme>
@@ -82,7 +82,7 @@ function themeOf(p: HudProps): Theme | null {
 // past 90% keeps its warning in red and pink.
 function flowAt(theme: Theme, p: number, i: number, frame: number): string {
   const k = Math.floor(i / 2 + frame / 2)
-  return p >= 90 ? (k % 2 === 0 ? '#F25F8B' : RED) : theme.flow[k % theme.flow.length]
+  return p >= 90 ? (k % 2 === 0 ? '#F25F8B' : RED) : (theme.flow[k % theme.flow.length] ?? RED)
 }
 
 const Hud: ClientModule<HudProps, State> = (props, surface) => {
@@ -106,9 +106,9 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       ticks++
       const cur = surface.state ?? init
       // Animate while Claude works or a theme is on; otherwise repaint every
-      // 30s so the reset countdowns stay current.
+      // 10s so the reset countdowns stay current and the cost and the reset take turns.
       if (latest && (latest.working || themeOf(latest))) surface.setState({ ...cur, frame: cur.frame + 1 })
-      else if (ticks % 150 === 0) surface.setState({ ...cur, refresh: cur.refresh + 1 })
+      else if (ticks % 50 === 0) surface.setState({ ...cur, refresh: cur.refresh + 1 })
     })
     const toggle = () => {
       const cur = surface.state ?? init
@@ -182,11 +182,12 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
   const others = limits.filter(l => l.kind !== 'five_hour' && l.kind !== 'seven_day')
   const ctxP = u?.ctxPercent ?? null
   const alert = [ctxP ?? 0, ...limits.map(l => l.percent)].some(p => p >= 90)
-  const cost: Seg = { t: u?.costUsd != null ? `$${u.costUsd.toFixed(2)}` : '$—', bold: true }
+  // Over the budget (/crabhud budget) the cost turns amber.
+  const cost: Seg = { t: u?.costUsd != null ? `$${u.costUsd.toFixed(2)}` : '$—', bold: true, c: overBudget(props) ? AMBER : undefined }
   const effortName = (e: string | null) => (e === null ? '—' : (W.effortNames[e] ?? e))
   const cols = surface.columns > 0 ? surface.columns : 100
   const status: Seg = props.working
-    ? { t: SPIN[st.frame % SPIN.length], c: ORANGE }
+    ? { t: SPIN[st.frame % SPIN.length] ?? '✻', c: ORANGE }
     : alert
       ? { t: '!', c: RED, bold: true }
       : { t: '✓', c: theme ? theme.flow[Math.floor(st.frame / 2) % theme.flow.length] : GREEN }
@@ -227,7 +228,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
     const glyphs = ['·', '░', '▒']
     const lines = Array.from({ length: rows }, (_, r) => {
       const v = shimmer(r, cols, st.frame)
-      const color = (i: number) => (v[i] === 0 ? '' : theme.wave(v[i], i, st.frame, desktop))
+      const color = (i: number) => (v[i] === 0 ? '' : theme.wave(v[i] ?? 1, i, st.frame, desktop))
       const out: RenderElement[] = []
       for (let i = 0; i < v.length; ) {
         let j = i
@@ -238,11 +239,11 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
           j = i + 1
           out.push(
             <Box width={1} height={1} flexShrink={0} overflow="hidden" justifyContent="center">
-              <Text color={color(i)}>{glyphs[v[i] - 1]}</Text>
+              <Text color={color(i)}>{glyphs[(v[i] ?? 1) - 1]}</Text>
             </Box>,
           )
         } else {
-          out.push(<Text color={color(i)}>{glyphs[v[i] - 1].repeat(j - i)}</Text>)
+          out.push(<Text color={color(i)}>{(glyphs[(v[i] ?? 1) - 1] ?? '').repeat(j - i)}</Text>)
         }
         i = j
       }
@@ -286,6 +287,14 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
         {text(status)}
       </Box>
     )
+    // No room for the resets: the cost takes turns with the 5-hour reset, ten seconds each;
+    // its slot is as wide as the longer, so the row does not shift as they swap.
+    const costPiece = (resets: boolean): Piece => {
+      const swap = !resets && five?.resetsAt != null ? `5h ↻ ${fmtLeft(five.resetsAt - now, true, W.now)}` : ''
+      if (!swap) return { seg: cost }
+      const shown: Seg = Math.floor(now / SWAP_MS) % 2 === 0 ? cost : { t: swap, dim: true }
+      return { el: text(shown), w: Math.max(est(cost.t), est(swap)) }
+    }
     const build = (n: number, resets: boolean, head: boolean): Piece[][] => [
       [{ el: statusEl, w: statusW }, { seg: { t: props.model, bold: true } }, ...(head ? [{ el: effort, w: ultra || (theme && !desktop) ? effortText.length + 1 : est(effortText) }] : [])],
       [
@@ -295,7 +304,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       ],
       limit('5h', five, n, resets),
       limit('7d', week, n, resets),
-      [{ seg: cost }],
+      [costPiece(resets)],
     ]
     const SEP = 5 // "  │  "
     const width = (groups: Piece[][]) =>
@@ -338,7 +347,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
             {row}
           </Box>
           {sep()}
-          {group(groups[groups.length - 1])}
+          {group(groups[groups.length - 1] ?? [])}
         </Box>
         <Box flexShrink={0} marginLeft={2}>
           {text({ t: '▾', dim: true })}
@@ -383,8 +392,10 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       ? { t: W.alert, c: RED }
       : { t: W.ready, c: theme ? theme.flow[Math.floor(st.frame / 2) % theme.flow.length] : GREEN }
 
+  // Today's and this month's spend (and the budget) on a last line, when there is any.
+  const footer = spendLine(props, W)
   return backdrop(
-    4 + others.length,
+    4 + others.length + (footer ? 1 : 0),
     <Box flexDirection="column" width="100%" rowGap={0}>
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
         <Box flexDirection="row" flexShrink={1} overflow="hidden" alignItems="center">
@@ -412,6 +423,7 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
       {limitRow('●', W.fiveHour, five)}
       {limitRow('◆', W.sevenDay, week)}
       {others.map(l => limitRow('$', l.kind === 'spend_limit' ? W.spend : l.kind, l))}
+      {footer ? <Box marginLeft={2}>{text({ t: footer, dim: true })}</Box> : null}
     </Box>,
   )
 }
