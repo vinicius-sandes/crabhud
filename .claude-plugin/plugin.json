@@ -1,7 +1,7 @@
 {
   "name": "crabhud",
-  "version": "3.1.0",
-  "description": "Above the prompt: a crab that shows what Claude is doing, a progress bar for long jobs (also on its own from Claude's task list or an approved plan), and a HUD with model, effort, context, 5-hour and 7-day limits and cost, in twelve bar styles (/crabhud style). Beside it: a live panel of subagents. Ships the /crab-flow skill and its five worker agents.",
+  "version": "3.1.1",
+  "description": "A crab above the prompt that shows what Claude is doing, a progress bar for long jobs (it also appears on its own from Claude's task list or an approved plan), and a HUD with the model, effort, context, 5-hour and 7-day limits and cost, drawn in twelve bar styles. A live panel beside the chat follows the subagents. Includes the /crab-flow skill and its five worker agents.",
   "author": {
     "name": "Vinicius Sandes"
   },
@@ -10,14 +10,14 @@
   "userConfig": {
     "language": {
       "type": "string",
-      "title": "Panel language",
-      "description": "pt by default; auto follows Claude Code's language setting, then the system locale",
-      "default": "pt",
+      "title": "Language",
+      "description": "English by default. pt is Brazilian Portuguese, ru is Russian (the agents panel and the bar only), and auto follows Claude Code's language setting, then the system's.",
+      "default": "en",
       "options": [
-        "auto",
         "en",
+        "pt",
         "ru",
-        "pt"
+        "auto"
       ]
     }
   },
