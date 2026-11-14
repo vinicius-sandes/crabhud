@@ -8,6 +8,9 @@ import { hudSvg } from './hud-svg'
 import { CYCLE, CYCLE_S, WORDS, pace } from './hud-words'
 import { NO_PORTRAITS, mergePortraits, portraitFor, readPortraits } from './portraits'
 import type { PortraitSet } from './portraits'
+import { DEFAULT_PALETTE, PALETTE_IDS, PALETTES, asPalette, type PaletteId } from './palettes'
+import { sceneSvg } from './scenes'
+import { SCENE, refusal, skin, skinCss, themeFor } from './theme'
 import { STRINGS, TEXT } from './words'
 import type { Lang } from './words'
 
@@ -1889,6 +1892,9 @@ const registerProgress: Register = on => {
 
     const styles = await read($, styleA)
     if (e.surface === 'desktop' && 'Svg' in ui) {
+      // With the theme on, every drawing takes the style's tones.
+      const css = await skinOf($)
+      const sk = (src: string) => skin(src, css)
       const { Svg } = ui
       const W = Math.max(240, Math.min(900, (e.props.bodyColumns || 40) * 8 - 8))
       const section = (key: string, text: string) => (
@@ -1900,37 +1906,37 @@ const registerProgress: Register = on => {
       if (p.isCompact) {
         return (
           <Box flexDirection="column" gap={1}>
-            <Svg source={compactSvg(W, list, planned, t)} alt={`${list.length} ${s.agentsCount}, ${summary}`} width={W} height={32} />
-            {hasUsage && <Svg key="usage" source={usageSvg(W, usage)} alt={usageAlt} width={W} height={22} />}
+            <Svg source={sk(compactSvg(W, list, planned, t))} alt={`${list.length} ${s.agentsCount}, ${summary}`} width={W} height={32} />
+            {hasUsage && <Svg key="usage" source={sk(usageSvg(W, usage))} alt={usageAlt} width={W} height={22} />}
             {toggleCompact}
           </Box>
         )
       }
       return (
         <Box flexDirection="column">
-          <Svg source={headerSvg(W, title, t)} alt={title ? `${title}: ${summary}` : summary} width={W} height={headerHeight(title)} />
-          {hasUsage && <Svg key="usage" source={usageSvg(W, usage)} alt={usageAlt} width={W} height={22} />}
+          <Svg source={sk(headerSvg(W, title, t))} alt={title ? `${title}: ${summary}` : summary} width={W} height={headerHeight(title)} />
+          {hasUsage && <Svg key="usage" source={sk(usageSvg(W, usage))} alt={usageAlt} width={W} height={22} />}
           {f && f.groups.length > 0 && (
-            <Svg source={stepsSvg(W, f)} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${i + 1}. ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
+            <Svg source={sk(stepsSvg(W, f))} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${i + 1}. ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
           )}
           {toggleCompact}
           {isEmpty && <Text dimColor>{s.empty}</Text>}
           {running.length > 0 && section('h-run', `${s.running} · ${running.length}`)}
           {running.map(a => (
-            <Svg key={a.id} source={agentSvg(W, a, at, styles.desktop)} alt={`${a.description}: ${modelName(a.model)}, ${s.isRunning}`} width={W} height={66} />
+            <Svg key={a.id} source={sk(agentSvg(W, a, at, styles.desktop))} alt={`${a.description}: ${modelName(a.model)}, ${s.isRunning}`} width={W} height={66} />
           ))}
           {finished.length > 0 && toggleDone}
           {!p.isDoneCollapsed &&
             finished.map(a =>
               isShrunk(a, at) ? (
-                <Svg key={a.id} source={shrunkSvg(W, a, at)} alt={`${a.description}: ${s.isFinished}, ≈${fmtCost(a.costUsd)}`} width={W} height={SHRUNK_H} />
+                <Svg key={a.id} source={sk(shrunkSvg(W, a, at))} alt={`${a.description}: ${s.isFinished}, ≈${fmtCost(a.costUsd)}`} width={W} height={SHRUNK_H} />
               ) : (
-                <Svg key={a.id} source={agentSvg(W, a, at, styles.desktop)} alt={`${a.description}: ${modelName(a.model)}, ${s.isFinished}`} width={W} height={66} />
+                <Svg key={a.id} source={sk(agentSvg(W, a, at, styles.desktop))} alt={`${a.description}: ${modelName(a.model)}, ${s.isFinished}`} width={W} height={66} />
               ),
             )}
           {planned.length > 0 && section('h-plan', `${s.planned} · ${planned.length}`)}
           {planned.map(pl => (
-            <Svg key={`plan-${pl.n}`} source={plannedSvg(W, pl)} alt={`${pl.n}. ${pl.title}: ${s.isPlanned}`} width={W} height={46} />
+            <Svg key={`plan-${pl.n}`} source={sk(plannedSvg(W, pl))} alt={`${pl.n}. ${pl.title}: ${s.isPlanned}`} width={W} height={46} />
           ))}
         </Box>
       )
@@ -2134,7 +2140,7 @@ const registerProgress: Register = on => {
           .join(' · ')
       : ''
     const waitRow = !waiting ? null : vector ? (
-      <ui.Svg key="crab-wait" source={waitSvg(width, waitText)} alt={waitText} width={width} height={H} />
+      <ui.Svg key="crab-wait" source={skin(waitSvg(width, waitText), await skinOf($))} alt={waitText} width={width} height={H} />
     ) : (
       <Text key="crab-wait" color={WAIT} bold wrap="truncate-end">
         ! {waitText}
@@ -2159,7 +2165,7 @@ const registerProgress: Register = on => {
         const art = walk ? walkSvg(width, walk, status, t, note) : moodSvg(width, mood, status)
         return above(
           <Box flexDirection="row" alignItems="center" gap={1}>
-            <Svg source={art} alt={status} width={width} height={H} />
+            <Svg source={skin(art, await skinOf($))} alt={status} width={width} height={H} />
             {crewButton}
           </Box>,
         )
@@ -2211,7 +2217,7 @@ const registerProgress: Register = on => {
       const party = f.isFinished && f.doneAt !== undefined && t - f.doneAt < PARTY_MS ? t - f.doneAt : undefined
       return above(withWait(
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(f, width, mood, (await read($, styleA)).desktop, glide, party)} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
+          <Svg source={skin(rowSvg(f, width, mood, (await read($, styleA)).desktop, glide, party), await skinOf($))} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
           {crewButton}
           {dismiss}
         </Box>,
@@ -2261,6 +2267,11 @@ const langA = atom({ plugin: 'crabhud', key: 'language' } as const, null)
 // The bars' look, per surface (/crabhud style).
 const DEFAULT_STYLES: HudStyles = { terminal: 'classic', desktop: 'pixel' }
 const styleA = atom({ plugin: 'crabhud', key: 'style' } as const, DEFAULT_STYLES)
+// /crabhud theme: the app's whole look follows the app's bar style; off by default.
+const themeA = atom({ plugin: 'crabhud', key: 'theme' } as const, false)
+// The theme's palette (the app's colors), apart from the style (the backdrop and the glass).
+const paletteA = atom({ plugin: 'crabhud', key: 'palette' } as const, DEFAULT_PALETTE as string)
+const paletteOf = async ($: EngineInterface): Promise<PaletteId> => asPalette(await read($, paletteA)) ?? DEFAULT_PALETTE
 // Every 30 s: the app's HUD reads it, so its reset countdowns stay current.
 const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
 const STYLE_PANE = 'crabhud-style'
@@ -2269,7 +2280,9 @@ const STYLE_KEYS = '123456789abcdefg'.slice(0, STYLES.length).split('')
 const STYLE_KEYS_HELP = STYLE_KEYS.length > 9 ? `1–9, ${STYLE_KEYS.slice(9).join(', ')}` : STYLE_KEYS.join('/')
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
-const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), set a budget for the chat (budget), see everything as text (status) or watch a demo (demo)'
+// Drawn after the name; it also tells the app the command takes words after it.
+const ARGS = '[on | off | style | theme on | theme off | palette | sound | language | budget | status | demo]'
+const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), dress the whole app in the style (theme) and its colors (palette), set a budget for the chat (budget), see everything as text (status) or watch a demo (demo)'
 
 
 // The window autocompaction measures against, as /context shows it: the
@@ -2725,15 +2738,17 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
 // Session start, before the other hooks: the command, what was saved, and the clock.
 // The mod's register.tsx calls it (one session.start hook for the whole mod).
 async function hudStart($: EngineInterface): Promise<void> {
-  await $.command.register({ name: 'crabhud', description: COMMAND })
+  await $.command.register({ name: 'crabhud', description: COMMAND, argumentHint: ARGS })
 
-  const [savedExpanded, savedHidden, lang, savedStyle, savedSound, savedBudget] = await Promise.all([
+  const [savedExpanded, savedHidden, lang, savedStyle, savedSound, savedBudget, savedTheme, savedPalette] = await Promise.all([
     $.store.get('expanded'),
     $.store.get('hidden'),
     loadLanguage($),
     $.store.get('style'),
     $.store.get('sound'),
     $.store.get('budget'),
+    $.store.get('theme'),
+    $.store.get('palette'),
   ])
   if (typeof savedBudget === 'number' && savedBudget > 0) await update($, budgetA, () => savedBudget)
   if (typeof savedExpanded === 'boolean') await update($, expandedA, () => savedExpanded)
@@ -2745,6 +2760,12 @@ async function hudStart($: EngineInterface): Promise<void> {
   if (typeof savedHidden === 'boolean') await update($, hiddenA, () => savedHidden)
   if (typeof savedSound === 'boolean') await update($, soundA, () => savedSound)
   await update($, langA, () => lang)
+  const palette = asPalette(savedPalette)
+  if (palette !== null) await update($, paletteA, () => palette)
+  if (savedTheme === true) {
+    await update($, themeA, () => true)
+    await applyTheme($, (await read($, styleA)).desktop)
+  }
 
   // What this chat already knows is a baseline, not news: the shared file
   // may hold a fresher reading from another chat.
@@ -2817,6 +2838,56 @@ async function hudAfterStep($: EngineInterface, e: Step): Promise<void> {
 async function setStyle($: EngineInterface, value: HudStyles): Promise<void> {
   await update($, styleA, () => value)
   await $.store.set('style', value)
+  if (await read($, themeA)) await applyTheme($, value.desktop)
+}
+
+// The crabhud theme in one style: colors, frosted glass and the backdrop scene.
+// Desktop ignores a theme whose colors it would refuse, so that one is not sent.
+async function applyTheme($: EngineInterface, style: HudStyle): Promise<string | null> {
+  const { look, problems } = themeFor(style, await paletteOf($))
+  const no = refusal(problems)
+  if (no !== undefined) return no
+  try {
+    await $.theme.set(look)
+  } catch {
+    // An older Claude Code has no themes at all.
+    return 'this Claude Code has no themes yet; update it'
+  }
+  return null
+}
+
+// Turns the theme on or off (the command and the picker's button) and says so.
+async function setTheme($: EngineInterface, isOn: boolean): Promise<string> {
+  const T = TEXT[(await read($, langA)) ?? 'en']
+  const style = (await read($, styleA)).desktop
+  if (isOn) {
+    const no = await applyTheme($, style)
+    if (no !== null) return T.themeRefused(no)
+  } else if (await read($, themeA)) {
+    // Only the person's own off clears it: a clear clears any mod's theme.
+    await $.theme.clear().catch(() => undefined)
+  }
+  await update($, themeA, () => isOn)
+  await $.store.set('theme', isOn)
+  return `${T.theme(isOn, STYLE_NAMES[style])}${isOn ? `\n${T.themeWhere}` : ''}`
+}
+
+// Picks the theme's palette (the command and the picker) and repaints a theme that is on.
+async function setPalette($: EngineInterface, id: PaletteId): Promise<void> {
+  await update($, paletteA, () => id)
+  await $.store.set('palette', id)
+  if (await read($, themeA)) await applyTheme($, (await read($, styleA)).desktop)
+}
+
+// The skin for the pane's and the band's drawings: the palette's tones, or none.
+async function skinOf($: EngineInterface): Promise<string> {
+  return (await read($, themeA)) ? skinCss((await read($, styleA)).desktop, await paletteOf($)) : ''
+}
+
+// A palette's swatch in the picker: its page, its accent and its second color.
+const swatchSvg = (id: PaletteId): string => {
+  const p = PALETTES[id]
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="14" viewBox="0 0 28 14"><rect width="28" height="14" rx="4" fill="#1a1715"/><circle cx="9" cy="7" r="4.5" fill="${p.accent}"/><circle cx="19.5" cy="7" r="3.5" fill="${p.second}"/></svg>`
 }
 
 // The style picker: each style drawn with a live sample bar, one key each.
@@ -2829,6 +2900,8 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
   const styles = await read($, styleA)
   const surface = e.surface === 'desktop' ? 'desktop' : 'terminal'
   const current = styles[surface]
+  const isTheme = await read($, themeA)
+  const palette = await paletteOf($)
   const cols = Math.max(40, e.props?.bodyColumns ?? 80)
   const n = Math.max(8, Math.min(16, cols - 50))
   const live = (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in els
@@ -2902,6 +2975,25 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
     <Box flexDirection="column" rowGap={e.surface === 'desktop' ? 1 : 0}>
       {rows}
       <Text dimColor>{T.pickHelp(STYLE_KEYS_HELP)}</Text>
+      {e.surface === 'desktop' || e.surface === 'mobile' ? (
+        <Box flexDirection="row" columnGap={2} alignItems="center">
+          <Button key="style-theme" label={T.themeButton(isTheme)} onPress={() => void setTheme($, !isTheme)} />
+          <Text dimColor wrap="truncate">{T.pickTheme}</Text>
+        </Box>
+      ) : null}
+      {e.surface === 'desktop' || e.surface === 'mobile' ? (
+        <Box flexDirection="column" rowGap={1}>
+          <Text bold>{T.pickPalette}</Text>
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
+            {PALETTE_IDS.map(id => (
+              <Box key={`palette-${id}`} flexDirection="row" columnGap={1} alignItems="center">
+                {'Svg' in els && <els.Svg source={swatchSvg(id)} alt="" width={28} height={14} />}
+                <Button key={`palette-btn-${id}`} label={`${PALETTES[id].name[lang]}${id === palette ? ' ✓' : ''}`} plain onPress={() => void setPalette($, id)} />
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      ) : null}
     </Box>
   )
 }
@@ -2912,6 +3004,7 @@ async function statusText($: EngineInterface): Promise<string> {
   const T = TEXT[lang]
   const S = T.status
   const W = WORDS[lang]
+  const isTheme = await read($, themeA)
   const [chat, limits, model, effort, ultra, f, list, turn, days, styles, sound, hidden, t] = await Promise.all([
     read($, chatA),
     read($, limitsA),
@@ -2957,13 +3050,26 @@ async function statusText($: EngineInterface): Promise<string> {
   const planned = plannedOf(f, list).length
   const crew = [running ? `${running} ${S.running}` : '', list.length - running ? `${list.length - running} ${S.done}` : '', planned ? `${planned} ${S.planned}` : ''].filter(Boolean)
   lines.push(`${S.agents}: ${crew.join(' · ') || S.noAgents}`)
-  lines.push(`${S.look}: ${STYLE_NAMES[styles.desktop]} ${S.inApp} · ${STYLE_NAMES[styles.terminal]} ${S.inTerminal} · ${sound ? S.soundOn : S.soundOff} · ${S.language} ${LANG_NAME[lang]}`)
+  lines.push(`${S.look}: ${STYLE_NAMES[styles.desktop]} ${S.inApp} · ${STYLE_NAMES[styles.terminal]} ${S.inTerminal} · ${sound ? S.soundOn : S.soundOff} · ${isTheme ? `${S.themeOn} (${PALETTES[await paletteOf($)].name[lang]})` : S.themeOff} · ${S.language} ${LANG_NAME[lang]}`)
   if (hidden) lines.push('', S.hidden)
   return lines.join('\n')
 }
 
 const registerHud: Register = on => {
   on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => stylePicker($, e))
+
+  // The crabhud theme's backdrop: one scene per style, in the palette's colors,
+  // with crabs walking behind the chat. It reads only the style and the palette,
+  // so the drawing never changes while Claude works: a new source reloads the
+  // image, and the backdrop blinked at every step of a flow.
+  on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
+    if (e.surface !== 'desktop' && e.surface !== 'mobile') return next(e)
+    if (e.props.scene !== SCENE) return next(e)
+    const { Svg } = $.ui.resolve(e)
+    const [styles, palette] = await Promise.all([read($, styleA), paletteOf($)])
+    const source = sceneSvg(styles.desktop, palette, { crab, css: CRAB_CSS })
+    return <Svg source={source} alt={`crabhud: ${STYLE_NAMES[styles.desktop]}`} isInteractive />
+  })
 
   on('session.measure', async ($, e, next) => {
     await applyUsage($, e)
@@ -3008,6 +3114,23 @@ const registerHud: Register = on => {
       if (style === null) return { text: T.noStyle(value, STYLES.join(', ')) }
       await setStyle($, { terminal: style, desktop: style })
       return { text: T.style(STYLE_NAMES[style]) }
+    }
+    if (/^palette$/i.test(arg)) {
+      // `/crabhud palette mint` sets the theme's colors; a bare one opens the picker, where they are.
+      const T = TEXT[(await read($, langA)) ?? 'en']
+      if (!value) {
+        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        return {}
+      }
+      const id = asPalette(e.args.trim().slice(arg.length).trim())
+      if (id === null) return { text: T.noPalette(value, PALETTE_IDS.join(', ')) }
+      await setPalette($, id)
+      return { text: T.palette(PALETTES[id].name[(await read($, langA)) ?? 'en'], await read($, themeA)) }
+    }
+    if (/^theme$/i.test(arg)) {
+      // `/crabhud theme on` or `off`; a bare `/crabhud theme` flips it.
+      const isOn = /^on$/i.test(value) ? true : /^off$/i.test(value) ? false : !(await read($, themeA))
+      return { text: await setTheme($, isOn) }
     }
     if (/^budget$/i.test(arg)) {
       // `/crabhud budget 10` sets it (dollars, for this chat's cost); `off` or a bare `budget` clears it.
@@ -3118,7 +3241,7 @@ const registerHud: Register = on => {
       }
       return below(
         <Box key="hud" flexDirection="row" alignItems={props.expanded ? 'flex-start' : 'center'} gap={1}>
-          <Svg key="hud-svg" source={hud.svg} alt={hud.alt} width={W} height={hud.height} />
+          <Svg key="hud-svg" source={skin(hud.svg, await skinOf($))} alt={hud.alt} width={W} height={hud.height} />
           <Button key="hud-toggle" label={props.expanded ? '▴' : '▾'} plain onPress={toggle} />
         </Box>,
       )

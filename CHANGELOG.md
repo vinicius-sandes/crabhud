@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 3.2.0 (2026-11-14)
+
+- `/crabhud theme on` dresses the whole desktop app: the colors (the left sidebar too), frosted glass over a backdrop, and the agents panel's cards, the progress row and the HUD in the same tones. Off by default.
+- The style (`/crabhud style`) picks the backdrop and how clear the glass is; the palette picks the colors. Ten palettes, Claude's orange by default: Claude, Mint on black, Ocean, Violet, Rose, Amber, Lagoon, Neon, Ice and Graphite. Pick one in the style picker or with `/crabhud palette <name>`.
+- Twelve backdrops, one per style, each its own scene, with crabs walking behind the chat. The backdrop holds still while Claude works, so it never blinks between the steps of a bar.
+- The glass is see-through in every style, the clearest in Glass, and the panel's cards let the frost show.
+- Accent words in dark mode, such as a `/command` in the chat, keep the palette's color instead of turning almost white.
+- `/crabhud status` says whether the theme is on and in which palette; the style picker has a button that turns it on and off.
+- The `/crabhud` command shows the words it takes after its name.
 
 ## 3.1.1 (2026-11-13)
 

@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-3.1.1-D97757" alt="Version 3.1.1"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-3.2.0-D97757" alt="Version 3.2.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3B9C5F" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/Claude%20Code-desktop%20%26%20terminal-6B6A65" alt="Works in the Claude Code desktop app and terminal">
 </p>
@@ -92,6 +92,17 @@ The loudest effort settings get their own look, following each surface's effort 
 - In the terminal, Low is yellow, Medium green and High purple. xhigh turns the HUD purple with a purple wave behind it, and max turns it every colour with a rainbow wave. Ultracode (Tab in `/effort`, `/effort ultracode on`, or `"ultracode": true` in the settings) shows next to the level, as in `Max · Ultracode`. "Dynamic workflows" in `/config` only allows Ultracode; it doesn't turn it on.
 
 When the context or a limit crosses 90%, you get a toast.
+
+## The theme
+
+`/crabhud theme on` dresses the whole desktop app, and `/crabhud theme off` gives the app its own look back. It is off until you turn it on, and the choice carries over to later chats. Two choices shape it, both in the `/crabhud style` picker:
+
+- **The style** picks the backdrop and how clear the glass is. Each of the twelve styles has its own scene behind the chat, with crabs walking across it: a pixel reef, a city of rounded towers, a horizon with sailboats, bold dunes, constellations, a starry night, an old terminal, waves and a lighthouse, a striped beach, a synthwave sun, bubbles and lenses, stepped pyramids. The middle stays calm, where the words are.
+- **The palette** picks the colors of the app (the left sidebar too) and of the scene: Claude (orange, the default), Mint on black, Ocean, Violet, Rose, Amber, Lagoon, Neon, Ice and Graphite. `/crabhud palette <name>` picks one too.
+
+The app frosts its panels over the backdrop, and the glass is see-through in every style: the clearest in Glass, the least in Solid and Classic. The agents panel's cards, the progress row and the HUD take the palette's tones. The backdrop holds still while Claude works, so it never blinks; only what is drawn in it moves.
+
+The theme shows in the desktop and mobile apps; the terminal keeps its own colors. It needs a Claude Code with themes (the desktop app's 2.1.325 has them). Only one theme shows at a time, so turning on the crabhud theme replaces another mod's theme, and `/crabhud theme off` clears the theme the app is showing.
 
 ## The agents panel
 
@@ -199,6 +210,7 @@ To skip the question, for example when you set up a machine from a script, set t
 - `/crabhud off` hides the HUD, `/crabhud on` shows it again, and `/crabhud` toggles it.
 - `/crabhud language` asks for the language again; `/crabhud language en` or `/crabhud language pt-BR` sets it directly.
 - `/crabhud style` opens the style picker; `/crabhud style pixel|segments|line|solid|dots|spark|classic|wave|stripes|neon|glass|stairs` sets the style directly.
+- `/crabhud theme on` dresses the whole desktop app (colors, frosted glass and a backdrop with crabs), and `/crabhud theme off` turns it off, which is the default. `/crabhud palette <name>` picks its colors.
 - `/crabhud budget 10` turns this chat's cost amber once it passes $10, and `/crabhud budget off` clears it. The budget carries over to later chats.
 - `/crabhud status` sums everything up as text: model and effort, context, the limits with their resets and pace, this chat's, today's and this month's spend, the bar, the agents and your settings.
 - `/crabhud demo` plays 20 seconds of sample data (a bar walking to its celebration, two agents, the amber wait, and sample limits when there's no reading yet), then puts everything back as it was. `/crabhud demo off` stops it.

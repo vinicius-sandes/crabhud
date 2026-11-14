@@ -649,7 +649,7 @@ test('/crabhud style opens the picker: twelve live previews (Client in the termi
     // The terminal previews through the Client; the app draws each sample as an Svg.
     const previews = surface === 'terminal'
       ? (await ui.findAll({ type: 'Client' })).map((c: any) => c.props.props.style)
-      : (await ui.findAll({ type: 'Svg' })).map((c: any) => String(c.props.source).match(/data-preview="(\w+)"/)?.[1])
+      : (await ui.findAll({ type: 'Svg' })).map((c: any) => String(c.props.source).match(/data-preview="(\w+)"/)?.[1]).filter(Boolean)
     expect(previews).toEqual(ALL_STYLES)
     if (surface === 'desktop') expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
     const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
@@ -1363,4 +1363,61 @@ test('/crabhud demo plays sample bars and agents, then puts everything back', as
   const after = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...PANEL } as any)
   expect(await allText(after)).not.toContain('Draw the rings')
   await after.unmount()
+})
+
+test('/crabhud theme dresses the app: the style picks the backdrop and glass, the palette the colors, and the backdrop holds still', async ($, on) => {
+  world(on)
+  panes(on)
+  const looks: any[] = []
+  let cleared = 0
+  on('theme.set', ((_$: unknown, e: any) => {
+    looks.push(e)
+    return { value: { isDrawn: true, requestId: 'look' } }
+  }) as any)
+  on('theme.clear', (() => {
+    cleared++
+    return { value: { isDrawn: false, reason: 'cleared' } }
+  }) as any)
+  await start($, on)
+  // Off by default: nothing is sent at the start.
+  expect(looks.length).toBe(0)
+
+  const on1 = (await $.command.run({ command: 'crabhud', args: 'theme on' } as any)) as any
+  expect(String(on1.text)).toContain('crabhud theme on')
+  expect(looks.length).toBe(1)
+  expect(looks[0].backdrop.scene).toBe('crabhud')
+  expect(Object.keys(looks[0].colors).length).toBeGreaterThan(0)
+
+  // A new style re-dresses the app: glass is the clearest, and the colors stay the palette's.
+  await $.command.run({ command: 'crabhud', args: 'style glass' } as any)
+  expect(looks.length).toBe(2)
+  expect(looks[1].backdrop.glass.opacity).toBeLessThan(looks[0].backdrop.glass.opacity)
+  expect(JSON.stringify(looks[1].colors)).toBe(JSON.stringify(looks[0].colors))
+
+  // A palette changes the colors, by its id or its name.
+  const pal = (await $.command.run({ command: 'crabhud', args: 'palette mint' } as any)) as any
+  expect(String(pal.text)).toContain('Mint on black')
+  expect(looks.length).toBe(3)
+  expect(JSON.stringify(looks[2].colors)).not.toBe(JSON.stringify(looks[1].colors))
+  expect(String(((await $.command.run({ command: 'crabhud', args: 'palette nope' } as any)) as any).text)).toContain('No palette')
+
+  // The backdrop: the style's scene with crabs in it, the same drawing while a flow moves.
+  const back = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', component: 'Backdrop', props: { scene: 'crabhud', plugin: 'crabhud' } } as any)
+  const first = String((await back.findAll({ type: 'Svg' }))[0]?.props.source)
+  expect(String((await back.findAll({ type: 'Svg' }))[0]?.props.alt)).toContain('Glass')
+  expect(first).toContain('c-')
+  expect(first.length).toBeLessThan(131072)
+  await $.tool.call(PROGRESS as any)
+  await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
+  expect(String((await back.findAll({ type: 'Svg' }))[0]?.props.source)).toBe(first)
+  await back.unmount()
+
+  expect(String(((await $.command.run({ command: 'crabhud', args: 'status' } as any)) as any).text)).toContain('theme on')
+  const off = (await $.command.run({ command: 'crabhud', args: 'theme off' } as any)) as any
+  expect(String(off.text)).toContain('theme off')
+  expect(cleared).toBe(1)
+  // Off, a new style or palette leaves the app's look alone.
+  await $.command.run({ command: 'crabhud', args: 'style dots' } as any)
+  await $.command.run({ command: 'crabhud', args: 'palette ocean' } as any)
+  expect(looks.length).toBe(3)
 })
