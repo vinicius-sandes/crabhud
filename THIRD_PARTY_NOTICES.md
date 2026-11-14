@@ -71,3 +71,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## make-colors.js (Claude Code)
+
+`hooks/make-colors.js` and `hooks/make-colors.d.ts` are copied unchanged from the plugin-authoring skill that ships
+with Claude Code (2.1.325), which asks mods to copy them in to build a theme's colors. They are Anthropic's, generated
+from the design system's theme code.

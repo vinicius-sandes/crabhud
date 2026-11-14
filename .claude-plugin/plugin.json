@@ -1,6 +1,6 @@
 {
   "name": "crabhud",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "description": "A crab above the prompt that shows what Claude is doing, a progress bar for long jobs (it also appears on its own from Claude's task list or an approved plan), and a HUD with the model, effort, context, 5-hour and 7-day limits and cost, drawn in twelve bar styles. A live panel beside the chat follows the subagents. Includes the /crab-flow skill and its five worker agents.",
   "author": {
     "name": "Vinicius Sandes"
