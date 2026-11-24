@@ -77,3 +77,34 @@ SOFTWARE.
 `hooks/make-colors.js` and `hooks/make-colors.d.ts` are copied unchanged from the plugin-authoring skill that ships
 with Claude Code (2.1.325), which asks mods to copy them in to build a theme's colors. They are Anthropic's, generated
 from the design system's theme code.
+
+## ascii-wallpapers (Handsher)
+
+From [ascii-wallpapers](https://github.com/Handsher/ascii-wallpapers): `hooks/ascii-wallpapers.js` is its
+`hooks/scenes.js` (the eight wallpapers and their cards, copied unchanged at faa65c0), and
+`hooks/ascii-wallpapers.d.ts` its `hooks/scenes.d.ts`. crabhud draws them unchanged as backgrounds of its theme,
+and asks the app for the window tone each was painted for.
+
+```
+MIT License
+
+Copyright (c) 2026 Handsher
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -1,35 +1,17 @@
 // The crabhud theme (/crabhud theme): the app's colors come from the palette
-// picked in /crabhud style (palettes.ts), and the bar style picks only how
-// frosted the panels are over the backdrop (scenes.ts draws the backdrop). The
-// right pane's and the band's drawings follow the same tones. Pure, no `$`.
+// (palettes.ts), the background and the frost from backdrops.ts (scenes.ts draws
+// crabhud's scenes). The right pane's and the band's drawings follow the same
+// tones. Pure, no `$`.
 
 import type { ThemeSetArgs } from 'claude-code'
 
 import type { HudStyle } from '../types'
+import { BLUR, DEFAULT_BLUR, GLASS_OPACITY, HS, isHs, sceneName, sceneOf, type Backdrop, type Blur } from './backdrops'
 import { makeColors } from './make-colors.js'
 import { PALETTES, type PaletteId } from './palettes'
 
-export const SCENE = 'crabhud'
-
-/**
- * The frost over the backdrop, per style: blur in points, how opaque the panels
- * stay. All see-through; glass the clearest, solid and classic the least.
- * Moderate blur with low opacity reads as glass; more blur reads as a flat fill.
- */
-export const GLASS: Record<HudStyle, { blur: number; opacity: number }> = {
-  pixel: { blur: 16, opacity: 0.38 },
-  segments: { blur: 16, opacity: 0.38 },
-  line: { blur: 14, opacity: 0.34 },
-  solid: { blur: 12, opacity: 0.5 },
-  dots: { blur: 16, opacity: 0.38 },
-  spark: { blur: 18, opacity: 0.34 },
-  classic: { blur: 10, opacity: 0.52 },
-  wave: { blur: 20, opacity: 0.3 },
-  stripes: { blur: 16, opacity: 0.38 },
-  neon: { blur: 22, opacity: 0.28 },
-  glass: { blur: 24, opacity: 0.2 },
-  stairs: { blur: 14, opacity: 0.4 },
-}
+// The frost and the backgrounds live in backdrops.ts since 3.3.0: the bar style no
+// longer picks them.
 
 // --- colors ----------------------------------------------------------------
 
@@ -89,28 +71,83 @@ export const tones = (palette: PaletteId) => {
   }
 }
 
-const cache = new Map<string, { look: ThemeSetArgs; problems: string[] }>()
+// --- the accent words: /skills and links in a message -----------------------------
 
-/** The whole theme of one style and palette, as `$.theme.set` takes it, and makeColors' notes. */
-export const themeFor = (style: HudStyle, palette: PaletteId): { look: ThemeSetArgs; problems: string[] } => {
-  const key = `${style}:${palette}`
-  const kept = cache.get(key)
+const lum = (hex: string): number => {
+  const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+  return 0.2126 * (c[0] ?? 0) + 0.7152 * (c[1] ?? 0) + 0.0722 * (c[2] ?? 0)
+}
+const contrast = (a: string, b: string): number => {
+  const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m) as [number, number]
+  return (x + 0.05) / (y + 0.05)
+}
+const PAGE = { dark: '#17171a', light: '#f6f5f1' } as const
+
+/**
+ * The accent words in the strong level the person picked (3.3.0): the palette's
+ * hue, saturated, then lightened (dark) or darkened (light) until it reads
+ * against the page, at least 7:1 in dark mode and 4.5:1 in light mode.
+ */
+export const vivid = (accent: string, mode: 'dark' | 'light'): string => {
+  const [h, s0] = hexToHsl(accent)
+  const s = s0 < 15 ? s0 : Math.max(s0, 96)
+  let l = mode === 'dark' ? 78 : 38
+  let c = hsl(h, s, l)
+  for (let k = 0; k < 40 && contrast(c, PAGE[mode]) < (mode === 'dark' ? 7 : 4.5); k++) {
+    l += mode === 'dark' ? 2 : -2
+    c = hsl(h, s, l)
+  }
+  return c
+}
+
+const colorsCache = new Map<PaletteId, { colors: NonNullable<ThemeSetArgs['colors']>; problems: string[] }>()
+
+/** The app's colors of one palette, and makeColors' notes. */
+const colorsOf = (palette: PaletteId) => {
+  const kept = colorsCache.get(palette)
   if (kept) return kept
   const t = tones(palette)
+  const accent = PALETTES[palette].accent
   const { theme, problems } = makeColors({
     label: `crabhud ${PALETTES[palette].name.en}`,
     id: `crabhud-${palette}`,
-    roles: { accent: PALETTES[palette].accent, success: '#3FB68B', danger: '#E5534B', warning: '#E9A23B', pro: '#8B83E6' },
+    roles: { accent, success: '#3FB68B', danger: '#E5534B', warning: '#E9A23B', pro: '#8B83E6' },
     dark: { gray: { anchors: t.dark } },
     light: { gray: { anchors: t.light } },
   })
   // In dark mode the lightest accent steps (accent words, such as a /command in
-  // the chat) come out almost white; keep the palette's hue in them.
-  const [ah, as] = hexToHsl(PALETTES[palette].accent)
+  // the chat) come out almost white; keep the palette's hue in them. The accent
+  // words' own steps (300 dark, 600 light) take the strong level.
+  const [ah, as] = hexToHsl(accent)
   const inputs = theme.inputs as Record<'light' | 'dark', Record<string, string>>
-  const dark = { ...inputs.dark, 'role-accent-50': hsl(ah, as, 84), 'role-accent-100': hsl(ah, as, 76) }
-  const colors = { ...theme, inputs: { ...inputs, dark } } as typeof theme
-  const look: ThemeSetArgs = { colors, backdrop: { scene: SCENE, glass: GLASS[style] } }
+  const dark = { ...inputs.dark, 'role-accent-50': hsl(ah, as, 84), 'role-accent-100': hsl(ah, as, 76), 'role-accent-300': vivid(accent, 'dark') }
+  const light = { ...inputs.light, 'role-accent-600': vivid(accent, 'light') }
+  const made = { colors: { ...theme, inputs: { ...inputs, dark, light } } as NonNullable<ThemeSetArgs['colors']>, problems }
+  colorsCache.set(palette, made)
+  return made
+}
+
+const cache = new Map<string, { look: ThemeSetArgs; problems: string[] }>()
+
+/**
+ * The whole theme, as `$.theme.set` takes it, and makeColors' notes: the
+ * palette's colors, and the background (`auto`: the bar style's scene) behind
+ * panels frosted at the blur picked. The glass keeps the app's own color, which
+ * follows the mode and the palette: a tint the mode does not suit would make the
+ * app cover the panels at 80 % and hide the scene.
+ */
+export const themeFor = (style: HudStyle, palette: PaletteId, backdrop: Backdrop = 'auto', blur: Blur = DEFAULT_BLUR): { look: ThemeSetArgs; problems: string[] } => {
+  const key = `${style}:${palette}:${backdrop}:${blur}`
+  const kept = cache.get(key)
+  if (kept) return kept
+  const { colors, problems } = colorsOf(palette)
+  const scene = sceneOf(backdrop, style)
+  const look: ThemeSetArgs =
+    scene === null
+      ? { colors }
+      : isHs(scene)
+        ? { colors, backdrop: { scene: sceneName(scene, palette), glass: { blur: BLUR[blur], opacity: GLASS_OPACITY } }, overrideColorScheme: HS[scene].tone }
+        : { colors, backdrop: { scene: sceneName(scene, palette), glass: { blur: BLUR[blur], opacity: GLASS_OPACITY } } }
   const made = { look, problems }
   cache.set(key, made)
   return made
@@ -124,17 +161,16 @@ export const refusal = (problems: string[]): string | undefined => problems.find
 /**
  * A <style> for the pane's and the band's drawings: the cards (.k, .tile), the
  * bar tracks (.bk, .be), the lines (.ln, .sep, .rt) and the words (.t, .s, .m)
- * in the palette's tones. Cards and tracks are see-through in every style, as
- * clear as the style's glass, so the frost shows.
+ * in the palette's tones. Cards and tracks are half see-through, so the frost
+ * shows behind them.
  */
-export const skinCss = (style: HudStyle, palette: PaletteId): string => {
+export const skinCss = (palette: PaletteId): string => {
   const p = PALETTES[palette]
   const [h] = hexToHsl(p.accent)
   const s = p.tint
   const d = p.depth
-  // Cards 0.2 (glass) to 0.5 (solid, classic); tracks 0.45 to 0.6.
-  const card = Math.max(0.2, Math.min(0.5, GLASS[style].opacity))
-  const track = +(0.45 + (card - 0.2) * 0.5).toFixed(2)
+  const card = 0.5
+  const track = 0.6
   const dark = `.t{fill:${hsl(h, 18 * s, 94)}}.s{fill:${hsl(h, 14 * s, 78)}}.m{fill:${hsl(h, 10 * s, 64)}}.k,.tile{fill:${hsl(h, 26 * s, d + 9)};fill-opacity:${card}}.bk{fill:${hsl(h, 24 * s, d + 13)};fill-opacity:${track}}.be{fill:${hsl(h, 18 * s, d + 22)}}.ln,.rt{stroke:${hsl(h, 22 * s, d + 16)}}.sep{fill:${hsl(h, 18 * s, d + 24)}}`
   const light = `.t{fill:${hsl(h, 30 * s, 9)}}.s{fill:${hsl(h, 22 * s, 28)}}.m{fill:${hsl(h, 16 * s, 36)}}.k,.tile{fill:${hsl(h, 50 * s, 97)};fill-opacity:${card}}.bk{fill:${hsl(h, 50 * s, 98)};fill-opacity:${track}}.bkb{stroke:${hsl(h, 30 * s, 78)}}.be{fill:${hsl(h, 30 * s, 82)}}.ln,.rt{stroke:${hsl(h, 34 * s, 84)}}.sep{fill:${hsl(h, 24 * s, 70)}}`
   return `<style>${light}@media (prefers-color-scheme: dark){${dark}}</style>`

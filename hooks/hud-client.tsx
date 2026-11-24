@@ -403,7 +403,6 @@ const Hud: ClientModule<HudProps, State> = (props, surface) => {
           <Box width={12} flexShrink={0}>{text(stateWord)}</Box>
           {text({ t: props.model, bold: true })}
           <Box marginLeft={3} flexDirection="row" columnGap={1}>
-            {text({ t: W.effort, dim: true })}
             {effort}
           </Box>
         </Box>

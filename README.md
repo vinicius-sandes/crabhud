@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-3.2.0-D97757" alt="Version 3.2.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-3.3.0-D97757" alt="Version 3.3.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3B9C5F" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/Claude%20Code-desktop%20%26%20terminal-6B6A65" alt="Works in the Claude Code desktop app and terminal">
 </p>
@@ -16,8 +16,8 @@ crabhud is a Claude Code mod that shows, without leaving the chat, what Claude i
 - A crab shows what Claude is doing right now: sleeping, thinking, analyzing, working or coordinating. In the desktop app it walks sideways through the free part of the row while Claude works, a puff of smoke behind it, and stops to act out the task. Asleep, it keeps still; next to the progress bar, it sits in the corner. At the right of the row, in small type, is how many actions this answer has taken so far and for how long (`12 actions · 1m12s`).
 - When Claude asks for a permission or asks you a question, the row turns amber until you answer.
 - Long jobs get a progress bar with a title, the step in progress, stretches in their own colors and a checklist in the panel. It appears on its own when Claude writes its task list or you approve a plan, with the task at hand on its tag. Skills and workflows feed it through the `mcp__crabhud__progress` tool, and subagents report their own steps through `mcp__crabhud__step`. At 100% the crab hops and throws pixel confetti.
-- Under them, the HUD shows the selected model and effort, the chat's context and cost, and the account's 5-hour and 7-day limits with their reset times and how fast they fill (`+12%/h`, `+8%/day`), shared across every chat. In the compact HUD each reading is a small ring; in the expanded one, a bar. When a limit is on pace to run out before it resets, the pace turns amber and the expanded HUD says when it will run out.
-- The agents panel (`/agents-info`) lists running, finished and planned subagents with their model, effort, progress, context, cost and time, each with its own crab, plus what you spent today and this month over every chat.
+- Under them, the HUD shows the selected model and effort, the chat's context and cost, and the account's 5-hour and 7-day limits with their reset times and how fast they fill (`+12%/h`, `+8%/day`), shared across every chat. The 5-hour pace comes from the last 90 minutes; the 7-day pace is the window's own average since it opened, shown once the window is six hours old. In the compact HUD each reading is a small ring; in the expanded one, a bar. When a limit is on pace to run out before it resets, the pace turns amber and the expanded HUD says when it will run out.
+- The agents panel (`/agents-info`) lists running, finished and planned subagents with their model, effort, progress, context, cost and time, each with its own crab.
 - `/crab-flow` runs an orchestrated delivery flow. The session model plans, owns the design and reviews, and five tiered worker agents (`crab-fable`, `crab-heavy`, `crab-careful`, `crab-medium`, `crab-light`) implement. The flow drives the progress bar, and each worker reports its own steps to the panel.
 
 <p align="center">
@@ -36,7 +36,7 @@ crabhud is a Claude Code mod that shows, without leaving the chat, what Claude i
 
 The HUD has two sizes. Compact is one line with a ring per reading; expanded gives each reading its own row, with its bar, token counts and full reset times. In the desktop app you switch with the ▾/▴ button beside it, and in the terminal by clicking anywhere on it. crabhud remembers your choice. In the app the rings breathe and a glint runs along them, faster while Claude works; in the terminal they fill in steps, ○ ◔ ◑ ◕ ●.
 
-When the compact row is too narrow for the reset times, the cost and the 5-hour reset take turns, ten seconds each (`$4.32` ↔ `5h ↻ 2h39m`). The expanded HUD ends with what you spent today and this month over every chat. Set a budget with `/crabhud budget 10` and the chat's cost turns amber once it passes $10.
+When the compact row is too narrow for the reset times, the cost and the 5-hour reset take turns, ten seconds each (`$4.32` ↔ `5h ↻ 2h39m`). The expanded HUD labels its rows `5h` and `7d`, puts the effort right after the model, writes a reset as `↻ 2h 39m`, and ends with what you spent today and this month over every chat. Set a budget with `/crabhud budget 10` and the chat's cost turns amber once it passes $10.
 
 ## The bar, on its own
 
@@ -95,12 +95,13 @@ When the context or a limit crosses 90%, you get a toast.
 
 ## The theme
 
-`/crabhud theme on` dresses the whole desktop app, and `/crabhud theme off` gives the app its own look back. It is off until you turn it on, and the choice carries over to later chats. Two choices shape it, both in the `/crabhud style` picker:
+`/crabhud theme on` dresses the whole desktop app, and `/crabhud theme off` gives the app its own look back. It is off until you turn it on, and the choices carry over to later chats. The `/crabhud style` picker has four parts: the bar, then three for the theme:
 
-- **The style** picks the backdrop and how clear the glass is. Each of the twelve styles has its own scene behind the chat, with crabs walking across it: a pixel reef, a city of rounded towers, a horizon with sailboats, bold dunes, constellations, a starry night, an old terminal, waves and a lighthouse, a striped beach, a synthwave sun, bubbles and lenses, stepped pyramids. The middle stays calm, where the words are.
-- **The palette** picks the colors of the app (the left sidebar too) and of the scene: Claude (orange, the default), Mint on black, Ocean, Violet, Rose, Amber, Lagoon, Neon, Ice and Graphite. `/crabhud palette <name>` picks one too.
+- **Background** picks the scene behind the chat, apart from the bar style. *Follows the bar* (the default) shows the scene of your bar style; *No scene* keeps only the colors. Then crabhud's twelve scenes, with crabs walking across them: a pixel reef, a city of rounded towers, a horizon with sailboats, bold dunes, constellations, a starry night, an old terminal, waves and a lighthouse, a striped beach, a synthwave sun, bubbles and lenses, stepped pyramids. And Handsher's eight ASCII wallpapers from [ascii-wallpapers](https://github.com/Handsher/ascii-wallpapers): Claude Code, Cloud Drift, Honu Lagoon, Koi Pond, Jellyfish, Paper Boats, Fireflies and Moonlit. `/crabhud scene <name>` picks one too.
+- **Colors** picks the palette of the app (the left sidebar too) and of crabhud's scenes: Claude (orange, the default), Mint on black, Ocean, Violet, Rose, Amber, Lagoon, Neon, Ice and Graphite. `/crabhud palette <name>` picks one too.
+- **Blur** picks how much the frosted panels blur the background: Sharp (the default), Light or Medium. `/crabhud blur sharp|light|medium` picks one too.
 
-The app frosts its panels over the backdrop, and the glass is see-through in every style: the clearest in Glass, the least in Solid and Classic. The agents panel's cards, the progress row and the HUD take the palette's tones. The backdrop holds still while Claude works, so it never blinks; only what is drawn in it moves.
+Behind the chat the app lays its own soft veil, which fades out toward the sides, so the words stay easy to read and the scene shows at the edges. The blur setting is for that area; the app keeps its own heavier frost on the left sidebar and the right panel. The agents panel is see-through too, so the background shows behind it, and its cards, the progress row and the HUD take the palette's tones. The accent color (a `/skill` or a link) comes out stronger, in the palette's hue. With a background on, though, the app itself paints links and `/skills` inside messages in the normal text color; they show the accent with *No scene*. The background holds still while Claude works, so it never blinks; only what is drawn in it moves.
 
 The theme shows in the desktop and mobile apps; the terminal keeps its own colors. It needs a Claude Code with themes (the desktop app's 2.1.325 has them). Only one theme shows at a time, so turning on the crabhud theme replaces another mod's theme, and `/crabhud theme off` clears the theme the app is showing.
 
@@ -109,11 +110,11 @@ The theme shows in the desktop and mobile apps; the terminal keeps its own color
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/panel-dark.svg">
-    <img src="assets/panel-light.svg" alt="The agents panel: the flow with its cost, tokens and time; this answer's actions and time, today's and this month's spend; two running subagents, each with its own crab, model, effort, steps, context and cost, and a finished one shrunk to a single line" width="440">
+    <img src="assets/panel-light.svg" alt="The agents panel: the flow's name with the Collapse button; this answer's actions and time, and the subagents' count, cost and time; two running subagents, each with its own crab, model, effort, steps, context and cost, and a finished one shrunk to a single line" width="440">
   </picture>
 </p>
 
-`/agents-info` opens the panel beside the chat. Each subagent gets a card with its crab, model and effort, the steps it reports, and its context, cost and time. Cards stay after they finish, marked with a check, and the header adds them up. A minute after an agent finishes well, its card shrinks to one line with its crab, name, cost, time and check; a card that failed stays full size. Under the header, one line shows this answer's actions and time on the left and, on the right, what you spent today and this month over every chat on the machine (the expanded HUD shows it too). The sums start counting on the day you install crabhud 2.6 or later and keep about two months.
+`/agents-info` opens the panel beside the chat. Each subagent gets a card with its crab, model and effort, the steps it reports, and its context, cost and time. Cards stay after they finish, marked with a check. A minute after an agent finishes well, its card shrinks to one line with its crab, name, cost, time and check; a card that failed stays full size. At the top, the flow's name shares a row with the Collapse button. Under it, one line shows this answer's actions and time on the left and, on the right, the subagents' count, cost and time (`3 agents · ≈$0.26 · 14m48s`); in a narrow panel the two halves stack. Every time in the panel reads the same way: `27s`, `14m48s`, `1h05m`. What you spent today and this month over every chat is in the expanded HUD; the sums start counting on the day you install crabhud 2.6 or later and keep about two months.
 
 Each kind of agent has its own clothes. The crab-flow workers, Explore and Plan wear these, and any other agent wears the handyman's overalls:
 
@@ -210,7 +211,7 @@ To skip the question, for example when you set up a machine from a script, set t
 - `/crabhud off` hides the HUD, `/crabhud on` shows it again, and `/crabhud` toggles it.
 - `/crabhud language` asks for the language again; `/crabhud language en` or `/crabhud language pt-BR` sets it directly.
 - `/crabhud style` opens the style picker; `/crabhud style pixel|segments|line|solid|dots|spark|classic|wave|stripes|neon|glass|stairs` sets the style directly.
-- `/crabhud theme on` dresses the whole desktop app (colors, frosted glass and a backdrop with crabs), and `/crabhud theme off` turns it off, which is the default. `/crabhud palette <name>` picks its colors.
+- `/crabhud theme on` dresses the whole desktop app (colors, frosted glass and a background), and `/crabhud theme off` turns it off, which is the default. `/crabhud palette <name>` picks its colors, `/crabhud scene <name>` its background (`auto` follows the bar, `none` has no scene) and `/crabhud blur sharp|light|medium` the frost.
 - `/crabhud budget 10` turns this chat's cost amber once it passes $10, and `/crabhud budget off` clears it. The budget carries over to later chats.
 - `/crabhud status` sums everything up as text: model and effort, context, the limits with their resets and pace, this chat's, today's and this month's spend, the bar, the agents and your settings.
 - `/crabhud demo` plays 20 seconds of sample data (a bar walking to its celebration, two agents, the amber wait, and sample limits when there's no reading yet), then puts everything back as it was. `/crabhud demo off` stops it.
@@ -244,4 +245,4 @@ claude plugin test ~/.claude/mods/crabhud
 
 ## License
 
-[MIT](LICENSE). The progress bar, the crab, the agents panel and `/crab-flow` start from JohnnyVizz's [claude-kit](https://github.com/JohnnyVizz/claude-kit) (its savvy-progress mod and savvy-flow plugin), and the bar styles follow nvr0x5's [claude-deck](https://github.com/nvr0x5/claude-deck). Both are MIT licensed; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). The progress bar, the crab, the agents panel and `/crab-flow` start from JohnnyVizz's [claude-kit](https://github.com/JohnnyVizz/claude-kit) (its savvy-progress mod and savvy-flow plugin), the bar styles follow nvr0x5's [claude-deck](https://github.com/nvr0x5/claude-deck), and eight of the theme's backgrounds are Handsher's [ascii-wallpapers](https://github.com/Handsher/ascii-wallpapers). All are MIT licensed; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

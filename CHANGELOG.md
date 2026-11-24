@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.3.0 (2026-11-24)
+
+- The band above the prompt reaches the right edge in the desktop app on a Mac, where the app draws about 8.8 px a column (elsewhere crabhud still counts 8). Every row of the band (the progress bar, the walking crab, the amber row and the line under them) shrinks to the room left instead of wrapping.
+- The progress bar takes two lines in the desktop app: the title, whole, with the agents button and the ✕ at its right, and under it the bar from the left edge to the crab. The dot before the title and the percent beside the crab are gone (the percent stays in the alt text and the terminal), and the tag keeps the step in whole words as far as the room allows (`Manual changes and notes · 2/14`).
+- Under the bar, the group in progress shows its name and count in bold (`Audit 1/2`); the others show their name alone, or only their line when fewer than four letters fit. No more lone "…".
+- The expanded HUD labels its rows `5h` and `7d`, sizes the label column to the widest label, puts the effort right after the model, in its colour, and writes a reset as `↻ 2h 39m`.
+- The 7-day pace is the window's own average since it opened, shown once the window is six hours old, instead of the last 90 minutes times 24. The 5-hour pace still comes from the last 90 minutes.
+- The agents panel drops the three tiles (cost, tokens, time): one line shows this answer's actions and time and, at the right, the subagents' count, cost and time, the tokens in the alt text. The Collapse button moves to the top row, beside the flow's name. Today's and this month's spend stay in the expanded HUD only.
+- Every time in the panel reads the same way (`27s`, `14m48s`, `1h05m`), and a group's count in the step list sits right after its name.
+- The `mcp__crabhud__progress` tool asks for a short name (one or two words) on a step whose name runs past about 14 letters.
+- No piece of a bar shows past its percent tag, in any style, on the HUD and on the progress bar.
+- The crab in the band is 25% bigger.
+- The theme's background is its own choice, apart from the bar style. The `/crabhud style` picker now has four parts: Bar, Background (cards with a live picture of each), Colors and Blur. *Follows the bar* is the default; *No scene* keeps only the colors; then crabhud's twelve scenes and Handsher's eight ASCII wallpapers ([ascii-wallpapers](https://github.com/Handsher/ascii-wallpapers), MIT), embedded in crabhud. New commands: `/crabhud scene <name>` and `/crabhud blur sharp|light|medium`.
+- The glass is sharper by default (blur 4 at 55%) and the soft glows behind the words are gone. The scenes no longer carry a veil of their own: the app already lays one behind the chat, at the glass's opacity, and with both the chat came out twice as dark. The glass keeps the app's own color for Handsher's wallpapers too, since a tint that does not suit the mode makes the app cover the panels.
+- The agents panel is see-through while the theme is on, so the background shows behind it, also after a reload.
+- Accent words (a `/skill` or a link) take a stronger color in the palette's hue, at least 7:1 against the page in dark mode and 4.5:1 in light mode. Inside messages the app paints them in the normal text color while a background is on; they show the accent with *No scene*.
+
 ## 3.2.1 (2026-11-24)
 
 - In the Windows desktop app, the ▾/▴ that opens the HUD could be pushed out of the row and vanish. The HUD now shrinks to the room left, and the toggle always stays beside it.
