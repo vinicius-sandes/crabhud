@@ -9,8 +9,9 @@ import { CYCLE, CYCLE_S, WORDS, pace } from './hud-words'
 import { NO_PORTRAITS, mergePortraits, portraitFor, readPortraits } from './portraits'
 import type { PortraitSet } from './portraits'
 import { DEFAULT_PALETTE, PALETTE_IDS, PALETTES, asPalette, type PaletteId } from './palettes'
+import { BACKDROPS, BLURS, DEFAULT_BACKDROP, DEFAULT_BLUR, HS, asBackdrop, asBlur, hsCard, hsSvg, isHs, parseScene, type Backdrop, type Blur } from './backdrops'
 import { sceneSvg } from './scenes'
-import { SCENE, refusal, skin, skinCss, themeFor } from './theme'
+import { refusal, skin, skinCss, themeFor } from './theme'
 import { STRINGS, TEXT } from './words'
 import type { Lang } from './words'
 
@@ -242,11 +243,20 @@ const currentStep = (f: Flow): string => {
   return capital(f.step) || steps[Math.min(f.done, steps.length - 1)] || ''
 }
 
-const label = (f: Flow): string => {
+// The bar's tag: the step in progress and the count. With `maxPx` (the tag's
+// widest, in px, as the app draws it) the step keeps whole words up to that room;
+// without, a fixed number of letters (the alt text, the terminal, the tool's reply).
+const label = (f: Flow, maxPx?: number): string => {
   const s = tr()
   if (f.isFinished) return s.done
   const step = currentStep(f)
   const count = f.total ? `${f.done}/${f.total}` : `${f.running} ${s.busy}`
+  if (step && maxPx !== undefined) {
+    const tail = ` · ${count}`
+    // The tag is 16 px of padding plus its text at 11 px, 8% wide (bar-styles' tag).
+    const room = (maxPx - 16) / 1.08 - textWidth(tail, 11)
+    return `${fitWords(step, 11, room)}${tail}`
+  }
   if (step) return `${clip(step, f.source === 'todo' || f.source === 'plan' ? 20 : 16)} · ${count}`
   if (f.phase === 'plan') return s.plan
   if (f.phase === 'design') return s.design
@@ -363,14 +373,23 @@ const noise = (x: number, y: number): number => {
 // The whole row is one SVG: the desktop wraps sibling elements onto new lines,
 // so title, bar, percent and the crab live in one drawing; only the count and
 // the dismiss are Buttons beside it.
-const H = 26
+// The band's crab at 125% (3.3.0; it was 90%): the row and the crab's slot
+// grow with it, so it keeps its footing beside the bar.
+const BAND_CRAB = 1.25
+const H = 36
 const BAR_H = 16
-const CRAB_W = 28
+const CRAB_W = 39
 const CELL = 3
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
 
 const xml = (s: string): string =>
   s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
+
+// The app reports the band in columns, not pixels. Its macOS build draws about
+// 8.8 CSS px per column; elsewhere 8 is the guess. The drawings shrink to the
+// room left, so a guess a little high only scales them down a touch.
+let isMacHost = false
+const pxPerCol = (surface: string): number => (surface === 'desktop' && isMacHost ? 8.8 : 8)
 
 const clip = (s: string, max: number): string => (s.length > max ? s.slice(0, Math.max(1, max - 1)) + '…' : s)
 
@@ -379,6 +398,20 @@ const charEm = (ch: string): number =>
   /[\s.,:;'|!il1()[\]]/.test(ch) ? 0.3 : /[A-ZА-ЯЁmwшщжюМШЩЖЮ@%]/.test(ch) ? 0.72 : 0.56
 
 const textWidth = (s: string, size: number): number => [...s].reduce((w, ch) => w + charEm(ch) * size, 0)
+
+// Whole words of `s` up to `maxW` pixels, no trailing filler ("Ler o"); a first
+// word too long is cut with an ellipsis.
+const fitWords = (s: string, size: number, maxW: number): string => {
+  if (textWidth(s, size) <= maxW) return s
+  let out = ''
+  for (const w of s.split(' ')) {
+    const next = out ? out + ' ' + w : w
+    if (textWidth(next, size) > maxW) break
+    out = next
+  }
+  while (out.includes(' ') && DANGLING.has(out.split(' ').pop()!.toLowerCase())) out = out.split(' ').slice(0, -1).join(' ')
+  return out || fitText(s, size, maxW)
+}
 
 // Cuts `s` to fit `maxW` pixels, with an ellipsis when it had to cut.
 const fitText = (s: string, size: number, maxW: number): string => {
@@ -426,12 +459,11 @@ const partySvg = (cx: number, cy: number, age: number, colors: string[]): string
 
 const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: number; age: number }, party?: number): string => {
   const RH = rowHeight(f)
-  // The title takes what it needs, up to 40% of the row; the bar takes the rest.
-  const title = fitText(f.title, 13, Math.max(60, W * 0.4))
-  const BAR_X = Math.round(16 + textWidth(title, 13) + 12)
-  const BAR_W = Math.max(60, W - BAR_X - 46 - CRAB_W)
+  // The title sits on its own line above (titleSvg): the bar runs from the left
+  // edge up to the crab.
+  const BAR_X = 0
+  const BAR_W = Math.max(60, W - CRAB_W - 8)
   const y0 = named(f) ? 3 : (H - BAR_H) / 2
-  const mid = y0 + BAR_H / 2
 
   // Where each group starts and ends on the bar (0-1), and which one is in progress.
   const spans: { name: string; color: string; f0: number; f1: number; done: number; size: number }[] = []
@@ -464,23 +496,43 @@ const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: num
     head: color,
     live: !f.isFinished,
     uid: 'p',
-    label: label(f),
+    // The tag may take up to 45% of the bar, so the step shows whole when it fits.
+    label: label(f, BAR_W * 0.45),
     from,
     steps: f.total,
     gaps: spans.slice(1).map(sp => sp.f0),
     // The tag stays on the group in progress: it starts no further left than that group does.
     tagFloor: pct => (spans.find(sp => pct / 100 < sp.f1 - 1e-9) ?? spans[spans.length - 1])?.f0 ?? 0,
   })
-  // Each group's name and count under its stretch.
+  // Under each stretch, its line and name. The group in progress shows its name
+  // and count whole, in bold, reaching over its neighbours if it must (they then
+  // keep their line only); the others show their name alone, or nothing when
+  // fewer than four letters would fit, never a lone "…".
+  const BAR_END = BAR_X + BAR_W
+  const liveSpan = f.isFinished ? undefined : spans.find(sp => sp === live && sp.name)
+  let liveBox: { x: number; text: string; w: number } | undefined
+  if (liveSpan) {
+    const text = `${liveSpan.name} ${liveSpan.done}/${liveSpan.size}`
+    const w = textWidth(text, 10.5) * 1.05
+    const x0 = BAR_X + Math.round(BAR_W * liveSpan.f0) + 2
+    liveBox = { x: Math.max(BAR_X, Math.min(x0, BAR_END - w)), text, w }
+  }
   const names = spans.filter(sp => sp.name).map(sp => {
-    const isLive = sp === live && !f.isFinished
+    const isLive = sp === liveSpan
     const x0 = BAR_X + Math.round(BAR_W * sp.f0)
     const x1 = BAR_X + Math.round(BAR_W * sp.f1)
-    const text = fitText(`${sp.name} ${sp.done}/${sp.size}`, 10.5, Math.max(10, x1 - x0 - 6))
-    return `<rect x="${x0 + 1}" y="${y0 + BAR_H + 4}" width="${Math.max(2, x1 - x0 - 3)}" height="2" rx="1" fill="${sp.color}" opacity="${isLive ? 0.9 : 0.4}"/>
-<text x="${x0 + 2}" y="${y0 + BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${isLive ? 600 : 400}" fill="${sp.color}" >${xml(text)}</text>`
+    const line = `<rect x="${x0 + 1}" y="${y0 + BAR_H + 4}" width="${Math.max(2, x1 - x0 - 3)}" height="2" rx="1" fill="${sp.color}" opacity="${isLive ? 0.9 : 0.4}"/>`
+    const textAt = (x: number, t: string, weight: number) =>
+      `<text x="${Math.round(x * 10) / 10}" y="${y0 + BAR_H + 17}" font-family="${FONT}" font-size="10.5" font-weight="${weight}" fill="${sp.color}">${xml(t)}</text>`
+    if (isLive && liveBox) return line + textAt(liveBox.x, liveBox.text, 600)
+    const fit = fitText(sp.name, 10.5, Math.max(0, x1 - x0 - 6))
+    const letters = fit.endsWith('…') && fit !== sp.name ? fit.length - 1 : fit.length
+    if (letters < Math.min(4, sp.name.length)) return line
+    const w = textWidth(fit, 10.5)
+    // A neighbour under the live group's name keeps its line only.
+    if (liveBox && x0 + 2 < liveBox.x + liveBox.w + 6 && x0 + 2 + w + 6 > liveBox.x) return line
+    return line + textAt(x0 + 2, fit, 400)
   })
-  const percent = `${Math.round(ratio(f) * 100)}%`
 
   return `<svg xmlns="http://www.w3.org/2000/svg" data-style="${style}" width="${W}" height="${RH}" viewBox="0 0 ${W} ${RH}">
 <style>
@@ -488,13 +540,19 @@ const rowSvg = (f: Flow, W: number, mood: Mood, style: HudStyle, from?: { p: num
 @media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}
 ${BAR_CSS}
 </style>
-<circle cx="5" cy="${mid}" r="4" fill="${color}"/>
-<text class="t" x="16" y="${mid + 4.5}" font-family="${FONT}" font-size="13" font-weight="500">${xml(title)}</text>
 ${bar}
 ${names.join('')}
-<text class="m" x="${W - CRAB_W - 6}" y="${mid + 4.5}" text-anchor="end" font-family="${FONT}" font-size="12.5" font-variant-numeric="tabular-nums">${percent}</text>
-${CRAB_CSS}${party !== undefined ? `<g class="jp">${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}</g>${partySvg(W - CRAB_W / 2, 12, party, [...spans.map(sp => groupColor(sp.name, spans.indexOf(sp))), DONE, '#F2C14E', '#E46FB0'])}` : crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, 0.9)}
+${CRAB_CSS}${party !== undefined ? `<g class="jp">${crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, BAND_CRAB)}</g>${partySvg(W - CRAB_W / 2, Math.round(H / 2 - 2), party, [...spans.map(sp => groupColor(sp.name, spans.indexOf(sp))), DONE, '#F2C14E', '#E46FB0'])}` : crab(W - CRAB_W + 1, 0, 'm-' + mood, false, true, BAND_CRAB)}
 </svg>`
+}
+
+// The bar's title, on the line above it, as wide as its words (up to `maxW`):
+// the buttons beside it keep to the right.
+const TITLE_H = 20
+const titleSvg = (title: string, maxW: number): string => {
+  const t = fitText(title, 13, Math.max(60, maxW))
+  const w = Math.max(1, Math.ceil(textWidth(t, 13) * 1.05) + 2)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${TITLE_H}" viewBox="0 0 ${w} ${TITLE_H}"><style>.t{fill:#1f1f1f}@media (prefers-color-scheme: dark){.t{fill:#ececec}}</style><text class="t" x="0" y="14" font-family="${FONT}" font-size="13" font-weight="600">${xml(t)}</text></svg>`
 }
 
 // The line between this bar and the mods drawn below it in the band.
@@ -504,7 +562,7 @@ const hairline = (W: number): string =>
 // No flow running: the crab and what Claude is doing, in one drawing.
 const moodSvg = (W: number, mood: Mood, text: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <style>.t{fill:#1f1f1f}.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>
-${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, 0.9)}
+${CRAB_CSS}${crab(0, 0, 'm-' + mood, false, true, BAND_CRAB)}
 <text x="${CRAB_W + 8}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(text.split(' · ')[0] ?? text)}</tspan><tspan class="m">${xml(text.includes(' · ') ? ' · ' + fitText(text.split(' · ').slice(1).join(' · '), 13, W - CRAB_W - 120) : '')}</tspan></text>
 </svg>`
 
@@ -657,9 +715,9 @@ ${w.fresh ? `.cin{animation:cin ${COSTUME_MS}ms ease-out ${-Math.round(age)}ms b
 @media (prefers-reduced-motion: reduce){.mv,.wk,.st,.cin,.walk .la,.walk .lb,.walk .bd{animation:none}.wk,.sm0,.sm1,.sm2,.sr{opacity:0}}</style>`
   const costume = 'm-' + mood
   // Walking it wears what it wears when it stops, so nothing comes off on the way.
-  const walking = crab(0, 0, costume, false, false, 0.9).replace(`class="c-${costume}"`, `class="c-${costume} walk"`)
+  const walking = crab(0, 0, costume, false, false, BAND_CRAB).replace(`class="c-${costume}"`, `class="c-${costume} walk"`)
   // Little pixel puffs at its feet on the side it walks away from; they grow and fade.
-  const CW = Math.round((CRAB_W * 0.9) / CRAB_SCALE)
+  const CW = Math.round((CRAB_W * BAND_CRAB) / CRAB_SCALE)
   const puff = (i: number) => `<g class="pf pf${i}"><rect class="smk" x="1" y="${i % 2}" width="4" height="4"/><rect class="smk" x="0" y="${2 + (i % 2)}" width="3" height="3"/><rect class="smk" x="4" y="${3 + (i % 2)}" width="2" height="2"/></g>`
   const trail = (i: number, from: number, to: number) => {
     const right = to >= from
@@ -673,7 +731,7 @@ ${w.fresh ? `.cin{animation:cin ${COSTUME_MS}ms ease-out ${-Math.round(age)}ms b
 <style>.t{fill:#1f1f1f}.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}}</style>${CRAB_CSS}${css}
 <text x="0" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan class="t" font-weight="600">${xml(head)}</tspan><tspan class="m">${xml(tail)}</tspan></text>
 ${side ? `<text class="m" x="${W}" y="${H / 2 + 4}" text-anchor="end" font-family="${FONT}" font-size="11.5" font-variant-numeric="tabular-nums">${xml(side)}</text>` : ''}
-<g class="mv">${smoke}<g class="cin"><g class="wk">${walking}</g><g class="st">${crab(0, 0, costume, false, true, 0.9)}</g></g></g></svg>`
+<g class="mv">${smoke}<g class="cin"><g class="wk">${walking}</g><g class="st">${crab(0, 0, costume, false, true, BAND_CRAB)}</g></g></g></svg>`
 }
 
 // Claude waiting on the person (a permission, a question): the row turns
@@ -684,7 +742,7 @@ const waitSvg = (W: number, text: string): string => {
   const tail = rest.length ? ' · ' + fitText(rest.join(' · '), 13, W - CRAB_W - 160) : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" data-wait="1" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <style>.m{fill:#6f6d67}@media (prefers-color-scheme: dark){.m{fill:#9a9a9a}}.wp{animation:wp 1.2s ease-in-out infinite}@keyframes wp{50%{opacity:.25}}@media (prefers-reduced-motion: reduce){.wp{animation:none}}</style>${CRAB_CSS}
-${crab(0, 0, 'm-think', false, false, 0.9)}
+${crab(0, 0, 'm-think', false, false, BAND_CRAB)}
 <g class="wp"><rect x="${CRAB_W - 4}" y="1" width="9" height="11" rx="2" fill="${WAIT}"/><rect x="${CRAB_W - 0.5}" y="3" width="2" height="4.5" fill="#fff"/><rect x="${CRAB_W - 0.5}" y="8.5" width="2" height="2" fill="#fff"/></g>
 <text x="${CRAB_W + 12}" y="${H / 2 + 4.5}" font-family="${FONT}" font-size="13"><tspan font-weight="600" fill="${WAIT}">${xml(head)}</tspan><tspan class="m">${xml(tail)}</tspan></text>
 </svg>`
@@ -800,14 +858,6 @@ const fmtSpan = (ms: number): string => {
   if (s < 60) return `${s}s`
   if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
   return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
-}
-
-const fmtTime = (ms: number): string => {
-  const s = Math.max(0, Math.round(ms / 1000))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const ss = String(s % 60).padStart(2, '0')
-  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 
 const elapsed = (a: AgentRun, at: number): number => (a.endedAt ?? Math.max(at, a.startedAt)) - a.startedAt
@@ -1109,45 +1159,37 @@ const statusMark = (x: number, y: number, status: string, color: string): string
 const svg = (W: number, H: number, body: string, attrs = ''): string =>
   `<svg xmlns="http://www.w3.org/2000/svg"${attrs} width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PANE_CSS}<style>${BAR_CSS}</style>${CRAB_CSS}${portraitCss()}${body}</svg>`
 
-// The pane's own title already says "Agents": the header names the flow, if any.
-const headerSvg = (W: number, title: string, t: ReturnType<typeof totals>): string => {
-  const s = tr()
-  const gap = 6
-  const tw = (W - gap * 2) / 3
-  const top = title ? 28 : 0
-  const tile = (i: number, k: string, v: string) =>
-    `<rect class="tile" x="${i * (tw + gap)}" y="${top}" width="${tw}" height="40" rx="8"/>
-<text class="s" x="${i * (tw + gap) + 9}" y="${top + 16}" font-family="${FONT}" font-size="11">${k}</text>
-<text class="t" x="${i * (tw + gap) + 9}" y="${top + 33}" font-family="${FONT}" font-size="15" font-weight="600" font-variant-numeric="tabular-nums">${v}</text>`
-  return svg(
-    W,
-    headerHeight(title),
-    `${title ? `<text class="t" x="0" y="15" font-family="${FONT}" font-size="14" font-weight="600">${xml(fitText(title, 14, W))}</text>` : ''}
-${tile(0, s.cost, '≈' + fmtCost(t.cost))}${tile(1, s.tokens, fmtTokens(t.tokens))}${tile(2, s.time, fmtTime(t.time))}`,
-  )
-}
+// The pane's own title already says "Agents": the header names the flow, if any,
+// on the row the Collapse button shares.
+const HEADER_H = 22
+const headerSvg = (W: number, title: string): string =>
+  svg(W, HEADER_H, `<text class="t" x="0" y="15" font-family="${FONT}" font-size="14" font-weight="600">${xml(fitText(title, 14, W))}</text>`)
 
-const headerHeight = (title: string): number => (title ? 72 : 44)
-
-// The panel's line of the moment: this answer (actions, time) at the left,
-// today's and this month's spend (every chat on this machine) at the right.
-type UsageLine = { turn: string; spend: string }
-function usageLine(turn: TurnStats | null, days: Record<string, number>, t: number): UsageLine {
+// The panel's line of the moment: this answer (actions, time) at the left, the
+// crew (how many agents, their cost, how long they ran) at the right. Today's and
+// this month's spend live in the open HUD.
+type UsageLine = { turn: string; crew: string }
+function usageLine(turn: TurnStats | null, list: AgentRun[], t: ReturnType<typeof totals>, now: number): UsageLine {
   const s = tr()
-  const { today, month } = spendNow(days, t)
   return {
-    turn: turn ? `${s.thisTurn}: ${s.actionsN(turn.actions)} · ${fmtSpan((turn.endedAt ?? t) - turn.startedAt)}` : '',
-    spend: month > 0 ? `${s.today} ≈${fmtCost(today)} · ${s.month} ≈${fmtCost(month)}` : '',
+    turn: turn ? `${s.thisTurn}: ${s.actionsN(turn.actions)} · ${fmtSpan((turn.endedAt ?? now) - turn.startedAt)}` : '',
+    crew: list.length ? `${s.agentsN(list.length)} · ≈${fmtCost(t.cost)} · ${fmtSpan(t.time)}` : '',
   }
 }
 
+// One line when both halves fit, else the crew goes under the turn.
+const usageStacked = (W: number, u: UsageLine): boolean =>
+  !!(u.turn && u.crew) && textWidth(u.turn, 12) + textWidth(u.crew, 12) + 16 > W
+const usageHeight = (W: number, u: UsageLine): number => (usageStacked(W, u) ? 40 : 22)
+
 const usageSvg = (W: number, u: UsageLine): string => {
-  const right = u.spend ? textWidth(u.spend, 12) + 12 : 0
+  const stacked = usageStacked(W, u)
+  const t = (x: number, y: number, v: string, end: boolean) =>
+    `<text class="s" x="${x}" y="${y}"${end ? ' text-anchor="end"' : ''} font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">${xml(fitText(v, 12, W))}</text>`
   return svg(
     W,
-    22,
-    `${u.turn ? `<text class="s" x="0" y="15" font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">${xml(fitText(u.turn, 12, W - right))}</text>` : ''}
-${u.spend ? `<text class="s" x="${W}" y="15" text-anchor="end" font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">${xml(u.spend)}</text>` : ''}`,
+    usageHeight(W, u),
+    stacked ? `${t(0, 15, u.turn, false)}${t(0, 33, u.crew, false)}` : `${u.turn ? t(0, 15, u.turn, false) : ''}${u.crew ? t(W, 15, u.crew, true) : ''}`,
   )
 }
 
@@ -1169,8 +1211,8 @@ const stepsSvg = (W: number, f: Flow): string => {
   f.groups.forEach((g, gi) => {
     const color = groupColor(g.name, gi)
     const gDone = Math.max(0, Math.min(g.steps.length, f.done - index))
-    out.push(`<text x="0" y="${y + 15}" font-family="${FONT}" font-size="12" font-weight="600" fill="${color}">${xml(fitText(g.name, 12, W - 60))}</text>
-<text class="m" x="${W}" y="${y + 15}" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${f.isFinished ? g.steps.length : gDone}/${g.steps.length}</text>`)
+    // The group's count sits right after its name: "Audit 1/2".
+    out.push(`<text x="0" y="${y + 15}" font-family="${FONT}" font-size="12"><tspan font-weight="600" fill="${color}">${xml(fitText(g.name, 12, W - 60))}</tspan><tspan class="m" font-size="11" font-variant-numeric="tabular-nums"> ${f.isFinished ? g.steps.length : gDone}/${g.steps.length}</tspan></text>`)
     y += 22
     // Down the first column, then the second: the list reads in order.
     const rows = Math.ceil(g.steps.length / n)
@@ -1214,7 +1256,7 @@ const agentSvg = (W: number, a: AgentRun, at: number, style: HudStyle): string =
   if (a.status === 'failed') meta.push(s.failed)
   const barW = textW
   const progress = progressOf(a)
-  const stats = `ctx ${ctx}% · ${fmtTokens(a.contextTokens)}  ≈${fmtCost(a.costUsd)}  ${fmtTime(elapsed(a, at))}`
+  const stats = `ctx ${ctx}% · ${fmtTokens(a.contextTokens)}  ≈${fmtCost(a.costUsd)}  ${fmtSpan(elapsed(a, at))}`
   const steps = a.stepTotal ? `${a.stepDone ?? 0}/${a.stepTotal}${a.stepNote ? ' · ' + a.stepNote : ''}` : ''
   const stepsW = Math.max(0, barW - textWidth(stats, 11) - 12)
   // Without reported steps the bar falls back to the context, drawn grey.
@@ -1241,7 +1283,7 @@ const isShrunk = (a: AgentRun, at: number): boolean => a.status === 'done' && a.
 const SHRUNK_H = 26
 
 const shrunkSvg = (W: number, a: AgentRun, at: number): string => {
-  const stats = `≈${fmtCost(a.costUsd)}  ${fmtTime(elapsed(a, at))}`
+  const stats = `≈${fmtCost(a.costUsd)}  ${fmtSpan(elapsed(a, at))}`
   const right = W - 22
   const textW = Math.max(20, right - 30 - textWidth(stats, 11) - 10)
   return svg(
@@ -1289,13 +1331,19 @@ const compactSvg = (W: number, list: AgentRun[], planned: Planned[], t: ReturnTy
     W,
     32,
     `${body}${more ? `<text class="s" x="${x}" y="21" font-family="${FONT}" font-size="12">+${more}</text>` : ''}
-<text class="s" x="${W}" y="21" text-anchor="end" font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">≈${fmtCost(t.cost)} · ${fmtTokens(t.tokens)} · ${fmtTime(t.time)}</text>`,
+<text class="s" x="${W}" y="21" text-anchor="end" font-family="${FONT}" font-size="12" font-variant-numeric="tabular-nums">≈${fmtCost(t.cost)} · ${fmtTokens(t.tokens)} · ${fmtSpan(t.time)}</text>`,
   )
 }
 
 // --- terminal drawing: the same rows in text.
 
 const STATUS_GLYPH: Record<string, string> = { running: '●', done: '✓', failed: '✗', planned: '◷' }
+
+// Opens the agents pane (or retitles it): see-through under the theme (3.3.0), so
+// the background shows behind it as it does behind the chat.
+async function openPane($: EngineInterface) {
+  return $.ui.open({ id: PANE, title: tr().pane, ...((await read($, themeA)) ? { backgroundColor: 'transparent' } : {}) })
+}
 
 // Opens the agents pane, or closes it when it is up; true when it ends up open.
 async function togglePane($: EngineInterface): Promise<boolean> {
@@ -1306,7 +1354,7 @@ async function togglePane($: EngineInterface): Promise<boolean> {
   }
   const at = await $.clock.now()
   await update($, now, () => at)
-  await $.ui.open({ id: PANE, title: tr().pane })
+  await openPane($)
   return true
 }
 
@@ -1314,7 +1362,7 @@ async function autoOpen($: EngineInterface, key: string): Promise<void> {
   const p = await read($, panel)
   if (p.autoOpenedFor === key) return
   await update($, panel, prev => ({ ...prev, autoOpenedFor: key }))
-  void $.ui.open({ id: PANE, title: tr().pane })
+  void openPane($)
 }
 
 // Session start, after the other hooks: the language, the tools and the clock.
@@ -1348,7 +1396,7 @@ async function progressStart($: EngineInterface, options: Parameters<Register>[1
               name: { type: 'string', description: 'A word or two, shown under its stretch of the bar.' },
               steps: {
                 type: 'array',
-                description: 'The steps of this stretch, in order: a few words each, or { name, short } to give the bar a shorter name than the panel.',
+                description: 'The steps of this stretch, in order: a few words each, or { name, short } to give the bar a shorter name than the panel. Give a short (one word or two) whenever a name runs past about 14 letters.',
                 items: {
                   anyOf: [
                     { type: 'string' },
@@ -1403,7 +1451,7 @@ async function progressStart($: EngineInterface, options: Parameters<Register>[1
   if (kept?.flow && !kept.flow.isFinished && !(await read($, flow))) await update($, flow, () => kept.flow)
 
   // The agents pane stays open, like the file tree: empty until a subagent runs.
-  if (!(await $.ui.panes()).some(p => p.id === PANE)) void $.ui.open({ id: PANE, title: tr().pane })
+  if (!(await $.ui.panes()).some(p => p.id === PANE)) void openPane($)
 
   // Ticks the running agents' clocks and the main turn's; quiet when nothing runs.
   $.clock.every(1000, () => {
@@ -1806,7 +1854,7 @@ const registerProgress: Register = on => {
       const f = await read($, flow)
       await autoOpen($, f && !f.isFinished ? f.title : 'crab-flow')
     } else if (!(await $.ui.panes()).some(p => p.id === PANE)) {
-      void $.ui.open({ id: PANE, title: tr().pane })
+      void openPane($)
     }
     return started
   })
@@ -1885,10 +1933,11 @@ const registerProgress: Register = on => {
       />
     )
     const isEmpty = list.length === 0 && planned.length === 0
-    const summary = `≈${fmtCost(t.cost)}, ${fmtTokens(t.tokens)} ${s.tokensWord}, ${fmtTime(t.time)}`
-    const usage = usageLine(await read($, turnA), await read($, spendA), Math.max(at, await $.clock.now()))
-    const hasUsage = !!(usage.turn || usage.spend)
-    const usageAlt = [usage.turn, usage.spend].filter(Boolean).join(' · ')
+    const summary = `≈${fmtCost(t.cost)}, ${fmtTokens(t.tokens)} ${s.tokensWord}, ${fmtSpan(t.time)}`
+    const usage = usageLine(await read($, turnA), list, t, Math.max(at, await $.clock.now()))
+    const hasUsage = !!(usage.turn || usage.crew)
+    // The tokens are only read aloud: the line keeps to count, cost and time.
+    const usageAlt = [usage.turn, usage.crew && `${usage.crew}, ${fmtTokens(t.tokens)} ${s.tokensWord}`].filter(Boolean).join(' · ')
 
     const styles = await read($, styleA)
     if (e.surface === 'desktop' && 'Svg' in ui) {
@@ -1907,19 +1956,29 @@ const registerProgress: Register = on => {
         return (
           <Box flexDirection="column" gap={1}>
             <Svg source={sk(compactSvg(W, list, planned, t))} alt={`${list.length} ${s.agentsCount}, ${summary}`} width={W} height={32} />
-            {hasUsage && <Svg key="usage" source={sk(usageSvg(W, usage))} alt={usageAlt} width={W} height={22} />}
+            {/* The crabs' row already carries the crew's cost and time. */}
+            {usage.turn ? <Svg key="usage" source={sk(usageSvg(W, { turn: usage.turn, crew: '' }))} alt={usage.turn} width={W} height={22} /> : null}
             {toggleCompact}
           </Box>
         )
       }
       return (
         <Box flexDirection="column">
-          <Svg source={sk(headerSvg(W, title, t))} alt={title ? `${title}: ${summary}` : summary} width={W} height={headerHeight(title)} />
-          {hasUsage && <Svg key="usage" source={sk(usageSvg(W, usage))} alt={usageAlt} width={W} height={22} />}
+          {/* The flow's name and the Collapse button share the top row. */}
+          <Box key="head" flexDirection="row" flexWrap="nowrap" justifyContent={title ? 'space-between' : 'flex-end'} alignItems="center">
+            {title ? (
+              <Box key="head-title" flexShrink={1} minWidth={0}>
+                <Svg source={sk(headerSvg(W - 110, title))} alt={title} />
+              </Box>
+            ) : null}
+            <Box key="head-btn" flexShrink={0}>
+              {toggleCompact}
+            </Box>
+          </Box>
+          {hasUsage && <Svg key="usage" source={sk(usageSvg(W, usage))} alt={usageAlt} width={W} height={usageHeight(W, usage)} />}
           {f && f.groups.length > 0 && (
             <Svg source={sk(stepsSvg(W, f))} alt={stepsOf(f).map((x, i) => `${i < f.done || f.isFinished ? '✓' : i === f.done ? '→' : '○'} ${i + 1}. ${x}`).join(', ')} width={W} height={stepsHeight(f, W)} />
           )}
-          {toggleCompact}
           {isEmpty && <Text dimColor>{s.empty}</Text>}
           {running.length > 0 && section('h-run', `${s.running} · ${running.length}`)}
           {running.map(a => (
@@ -1954,7 +2013,7 @@ const registerProgress: Register = on => {
             </Text>
             <Text color="green">{STATUS_GLYPH.done}</Text>
             <Text dimColor>
-              ≈{fmtCost(a.costUsd)} {fmtTime(elapsed(a, at))}
+              ≈{fmtCost(a.costUsd)} {fmtSpan(elapsed(a, at))}
             </Text>
           </Box>
         )
@@ -1983,7 +2042,7 @@ const registerProgress: Register = on => {
             {cellTexts(Text, barCells(styles.terminal, progress === null ? ctx : progress * 100, barW, () => (progress === null ? GREY : color), 0, false))}
             <Text dimColor>
               {' '}
-              {steps}ctx {ctx}% · {fmtTokens(a.contextTokens)} ≈{fmtCost(a.costUsd)} {fmtTime(elapsed(a, at))}
+              {steps}ctx {ctx}% · {fmtTokens(a.contextTokens)} ≈{fmtCost(a.costUsd)} {fmtSpan(elapsed(a, at))}
             </Text>
           </Text>
         </Box>
@@ -1998,11 +2057,8 @@ const registerProgress: Register = on => {
           </Text>
           {toggleCompact}
         </Box>
-        <Text dimColor>
-          ≈{fmtCost(t.cost)} · {fmtTokens(t.tokens)} {s.tokensWord} · {fmtTime(t.time)}
-        </Text>
         {usage.turn ? <Text dimColor wrap="truncate-end">{usage.turn}</Text> : null}
-        {usage.spend ? <Text dimColor wrap="truncate-end">{usage.spend}</Text> : null}
+        {usage.crew ? <Text dimColor wrap="truncate-end">{usage.crew}</Text> : null}
         {p.isCompact ? (
           <Text wrap="truncate-end">
             {[...running, ...finished].map(a => (
@@ -2101,8 +2157,8 @@ const registerProgress: Register = on => {
     // The band is shared: the bar sits on top, a hairline under it, and what the
     // other mods draw stays below.
     const theirs = await next(e)
-    // About 8 CSS px per reported column. No floor above the slot: a row wider than it would wrap.
-    const slot = (e.props.bodyColumns || 100) * 8
+    // The band's width in CSS px, from its columns (see pxPerCol).
+    const slot = Math.round((e.props.bodyColumns || 100) * pxPerCol(e.surface))
     const list = await read($, agents)
     const running = list.filter(a => a.status === 'running').length
     const act = await read($, activity)
@@ -2120,10 +2176,27 @@ const registerProgress: Register = on => {
     const vector = e.surface !== 'terminal' && 'Svg' in ui
     const divider =
       vector ? (
-        <ui.Svg source={hairline(width)} alt="—" width={width} height={13} />
+        <Box flexShrink={1} minWidth={0}>
+          <ui.Svg source={hairline(width)} alt="—" />
+        </Box>
       ) : (
         <Text dimColor>{'─'.repeat(Math.max(4, e.props.bodyColumns || 40))}</Text>
       )
+    // A drawing with the buttons beside it, on a row that never wraps: the drawing
+    // takes its own width up to the room left (its viewBox scales it), and the
+    // buttons never shrink.
+    const fitRow = (key: string, art: RenderElement, ...side: (RenderElement | null)[]) => (
+      <Box key={key} flexDirection="row" flexWrap="nowrap" alignItems="center" gap={1}>
+        <Box key={`${key}-art`} flexShrink={1} minWidth={0}>
+          {art}
+        </Box>
+        {side.filter(Boolean).map((b, i) => (
+          <Box key={`${key}-b${i}`} flexShrink={0}>
+            {b}
+          </Box>
+        ))}
+      </Box>
+    )
     const above = (bar: RenderElement) => (
       <Box flexDirection="column">
         {bar}
@@ -2140,7 +2213,7 @@ const registerProgress: Register = on => {
           .join(' · ')
       : ''
     const waitRow = !waiting ? null : vector ? (
-      <ui.Svg key="crab-wait" source={skin(waitSvg(width, waitText), await skinOf($))} alt={waitText} width={width} height={H} />
+      fitRow('crab-wait-row', <ui.Svg key="crab-wait" source={skin(waitSvg(width, waitText), await skinOf($))} alt={waitText} />)
     ) : (
       <Text key="crab-wait" color={WAIT} bold wrap="truncate-end">
         ! {waitText}
@@ -2163,12 +2236,7 @@ const registerProgress: Register = on => {
         // At work the crab walks the free part of the row; asleep it keeps still.
         walk = mood === 'sleep' ? null : nextWalk(walk, width, mood, status, note, t)
         const art = walk ? walkSvg(width, walk, status, t, note) : moodSvg(width, mood, status)
-        return above(
-          <Box flexDirection="row" alignItems="center" gap={1}>
-            <Svg source={skin(art, await skinOf($))} alt={status} width={width} height={H} />
-            {crewButton}
-          </Box>,
-        )
+        return above(fitRow('crab-walk-row', <Svg key="crab-walk" source={skin(art, await skinOf($))} alt={status} />, crewButton))
       }
       return above(
         <Box flexDirection="row" gap={1}>
@@ -2215,11 +2283,24 @@ const registerProgress: Register = on => {
       const glide = f.moved && t - f.moved.at < GLIDE_MS ? { p: f.moved.from, age: t - f.moved.at } : undefined
       // Just reached 100%: the crab's celebration.
       const party = f.isFinished && f.doneAt !== undefined && t - f.doneAt < PARTY_MS ? t - f.doneAt : undefined
+      // Two lines: the title with the buttons at the right, then the bar across
+      // the whole band, from the left edge to the crab.
+      const barW = Math.max(180, Math.min(1600, slot - 8))
       return above(withWait(
-        <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={skin(rowSvg(f, width, mood, (await read($, styleA)).desktop, glide, party), await skinOf($))} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} width={width} height={rowHeight(f)} />
-          {crewButton}
-          {dismiss}
+        <Box key="crab-bar-block" flexDirection="column">
+          <Box key="crab-bar-head" flexDirection="row" flexWrap="nowrap" alignItems="center" justifyContent="space-between" gap={1}>
+            <Box key="crab-bar-title" flexShrink={1} minWidth={0}>
+              <Svg key="crab-title" source={skin(titleSvg(f.title, width), await skinOf($))} alt={f.title} />
+            </Box>
+            <Box key="crab-bar-btns" flexDirection="row" flexWrap="nowrap" alignItems="center" gap={1} flexShrink={0}>
+              {crewButton}
+              {dismiss}
+            </Box>
+          </Box>
+          {fitRow(
+            'crab-bar-row',
+            <Svg key="crab-bar" source={skin(rowSvg(f, barW, mood, (await read($, styleA)).desktop, glide, party), await skinOf($))} alt={`${f.title}: ${label(f)}, ${percent} · ${status}`} />,
+          )}
         </Box>,
       ))
     }
@@ -2272,6 +2353,12 @@ const themeA = atom({ plugin: 'crabhud', key: 'theme' } as const, false)
 // The theme's palette (the app's colors), apart from the style (the backdrop and the glass).
 const paletteA = atom({ plugin: 'crabhud', key: 'palette' } as const, DEFAULT_PALETTE as string)
 const paletteOf = async ($: EngineInterface): Promise<PaletteId> => asPalette(await read($, paletteA)) ?? DEFAULT_PALETTE
+// The theme's background (3.3.0): `auto` follows the bar style, `none` has no scene.
+const backdropA = atom({ plugin: 'crabhud', key: 'backdrop' } as const, DEFAULT_BACKDROP as string)
+const backdropOf = async ($: EngineInterface): Promise<Backdrop> => asBackdrop(await read($, backdropA)) ?? DEFAULT_BACKDROP
+// How much the panels blur the background (3.3.0).
+const blurA = atom({ plugin: 'crabhud', key: 'blur' } as const, DEFAULT_BLUR as string)
+const blurOf = async ($: EngineInterface): Promise<Blur> => asBlur(await read($, blurA)) ?? DEFAULT_BLUR
 // Every 30 s: the app's HUD reads it, so its reset countdowns stay current.
 const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
 const STYLE_PANE = 'crabhud-style'
@@ -2281,8 +2368,8 @@ const STYLE_KEYS_HELP = STYLE_KEYS.length > 9 ? `1–9, ${STYLE_KEYS.slice(9).jo
 
 const LANGS: readonly HudLang[] = ['en', 'pt-BR']
 // Drawn after the name; it also tells the app the command takes words after it.
-const ARGS = '[on | off | style | theme on | theme off | palette | sound | language | budget | status | demo]'
-const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), dress the whole app in the style (theme) and its colors (palette), set a budget for the chat (budget), see everything as text (status) or watch a demo (demo)'
+const ARGS = '[on | off | style | theme on | theme off | palette | scene | blur | sound | language | budget | status | demo]'
+const COMMAND = 'Show or hide the HUD (on / off), pick its bar style (style), its language (language), turn sounds on and off (sound), dress the whole app (theme) in its colors (palette), background (scene) and frost (blur), set a budget for the chat (budget), see everything as text (status) or watch a demo (demo)'
 
 
 // The window autocompaction measures against, as /context shows it: the
@@ -2739,8 +2826,9 @@ function remoteBand(els: { Box: any; Text: any; Svg?: any }, p: HudProps, column
 // The mod's register.tsx calls it (one session.start hook for the whole mod).
 async function hudStart($: EngineInterface): Promise<void> {
   await $.command.register({ name: 'crabhud', description: COMMAND, argumentHint: ARGS })
+  isMacHost = ((await $.env.get('HOME')) ?? '').startsWith('/Users/')
 
-  const [savedExpanded, savedHidden, lang, savedStyle, savedSound, savedBudget, savedTheme, savedPalette] = await Promise.all([
+  const [savedExpanded, savedHidden, lang, savedStyle, savedSound, savedBudget, savedTheme, savedPalette, savedBackdrop, savedBlur] = await Promise.all([
     $.store.get('expanded'),
     $.store.get('hidden'),
     loadLanguage($),
@@ -2749,6 +2837,8 @@ async function hudStart($: EngineInterface): Promise<void> {
     $.store.get('budget'),
     $.store.get('theme'),
     $.store.get('palette'),
+    $.store.get('backdrop'),
+    $.store.get('blur'),
   ])
   if (typeof savedBudget === 'number' && savedBudget > 0) await update($, budgetA, () => savedBudget)
   if (typeof savedExpanded === 'boolean') await update($, expandedA, () => savedExpanded)
@@ -2762,9 +2852,15 @@ async function hudStart($: EngineInterface): Promise<void> {
   await update($, langA, () => lang)
   const palette = asPalette(savedPalette)
   if (palette !== null) await update($, paletteA, () => palette)
+  const backdrop = asBackdrop(savedBackdrop)
+  if (backdrop !== null) await update($, backdropA, () => backdrop)
+  const blur = asBlur(savedBlur)
+  if (blur !== null) await update($, blurA, () => blur)
   if (savedTheme === true) {
     await update($, themeA, () => true)
     await applyTheme($, (await read($, styleA)).desktop)
+    // A pane left open from before the reload takes the see-through background.
+    if ((await $.ui.panes()).some(p => p.id === PANE)) void openPane($)
   }
 
   // What this chat already knows is a baseline, not news: the shared file
@@ -2841,10 +2937,11 @@ async function setStyle($: EngineInterface, value: HudStyles): Promise<void> {
   if (await read($, themeA)) await applyTheme($, value.desktop)
 }
 
-// The crabhud theme in one style: colors, frosted glass and the backdrop scene.
-// Desktop ignores a theme whose colors it would refuse, so that one is not sent.
+// The crabhud theme: the palette's colors, the background picked (the bar style's
+// scene by default) and the frost. Desktop ignores a theme whose colors it would
+// refuse, so that one is not sent.
 async function applyTheme($: EngineInterface, style: HudStyle): Promise<string | null> {
-  const { look, problems } = themeFor(style, await paletteOf($))
+  const { look, problems } = themeFor(style, await paletteOf($), await backdropOf($), await blurOf($))
   const no = refusal(problems)
   if (no !== undefined) return no
   try {
@@ -2869,6 +2966,8 @@ async function setTheme($: EngineInterface, isOn: boolean): Promise<string> {
   }
   await update($, themeA, () => isOn)
   await $.store.set('theme', isOn)
+  // The agents pane turns see-through with the theme, and back.
+  if ((await $.ui.panes()).some(p => p.id === PANE)) void openPane($)
   return `${T.theme(isOn, STYLE_NAMES[style])}${isOn ? `\n${T.themeWhere}` : ''}`
 }
 
@@ -2879,15 +2978,53 @@ async function setPalette($: EngineInterface, id: PaletteId): Promise<void> {
   if (await read($, themeA)) await applyTheme($, (await read($, styleA)).desktop)
 }
 
+// Picks the theme's background (the command and the picker) and repaints a theme that is on.
+async function setBackdrop($: EngineInterface, b: Backdrop): Promise<void> {
+  await update($, backdropA, () => b)
+  await $.store.set('backdrop', b)
+  if (await read($, themeA)) await applyTheme($, (await read($, styleA)).desktop)
+}
+
+// Picks how much the panels blur the background, and repaints a theme that is on.
+async function setBlur($: EngineInterface, b: Blur): Promise<void> {
+  await update($, blurA, () => b)
+  await $.store.set('blur', b)
+  if (await read($, themeA)) await applyTheme($, (await read($, styleA)).desktop)
+}
+
 // The skin for the pane's and the band's drawings: the palette's tones, or none.
 async function skinOf($: EngineInterface): Promise<string> {
-  return (await read($, themeA)) ? skinCss((await read($, styleA)).desktop, await paletteOf($)) : ''
+  return (await read($, themeA)) ? skinCss(await paletteOf($)) : ''
 }
+
+// A background's name in the picker and in /crabhud status.
+const backdropName = (b: Backdrop, lang: HudLang): string =>
+  b === 'auto' ? TEXT[lang].sceneAuto : b === 'none' ? TEXT[lang].sceneNone : isHs(b) ? HS[b].name : STYLE_NAMES[b]
 
 // A palette's swatch in the picker: its page, its accent and its second color.
 const swatchSvg = (id: PaletteId): string => {
   const p = PALETTES[id]
   return `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="14" viewBox="0 0 28 14"><rect width="28" height="14" rx="4" fill="#1a1715"/><circle cx="9" cy="7" r="4.5" fill="${p.accent}"/><circle cx="19.5" cy="7" r="3.5" fill="${p.second}"/></svg>`
+}
+
+// The picker's background cards: a live small scene each, kept per palette so a
+// redraw of the picker does not draw twelve scenes again.
+const THUMB_W = 112
+const THUMB_H = 70
+const thumbs = new Map<string, string>()
+const thumbOf = (scene: HudStyle, palette: PaletteId): string => {
+  const key = `${scene}:${palette}`
+  let svg = thumbs.get(key)
+  if (svg === undefined) {
+    svg = sceneSvg(scene, palette, { crab, css: CRAB_CSS })
+    thumbs.set(key, svg)
+  }
+  return svg
+}
+// "No scene": the palette's page, a dot of its accent.
+const plainThumb = (id: PaletteId): string => {
+  const p = PALETTES[id]
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${THUMB_W} ${THUMB_H}"><style>.pg{fill:#f4f2ee}@media (prefers-color-scheme: dark){.pg{fill:#1c1a19}}</style><rect class="pg" width="${THUMB_W}" height="${THUMB_H}" rx="8"/><circle cx="${THUMB_W / 2}" cy="${THUMB_H / 2}" r="7" fill="${p.accent}" opacity=".7"/></svg>`
 }
 
 // The style picker: each style drawn with a live sample bar, one key each.
@@ -2902,6 +3039,8 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
   const current = styles[surface]
   const isTheme = await read($, themeA)
   const palette = await paletteOf($)
+  const backdrop = await backdropOf($)
+  const blur = await blurOf($)
   const cols = Math.max(40, e.props?.bodyColumns ?? 80)
   const n = Math.max(8, Math.min(16, cols - 50))
   const live = (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in els
@@ -2971,14 +3110,36 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
       </Box>
     </Box>
   ))
+  const isApp = e.surface === 'desktop' || e.surface === 'mobile'
+  // A background card: its small scene and its name, the current one ticked.
+  const card = (b: Backdrop) => {
+    const scene = b === 'auto' ? styles.desktop : b
+    const source = scene === 'none' ? plainThumb(palette) : isHs(scene) ? hsCard(scene) : thumbOf(scene, palette)
+    return (
+      <Box key={`scene-${b}`} flexDirection="column" rowGap={0} alignItems="flex-start">
+        {'Svg' in els && <els.Svg source={source} alt={backdropName(b, lang)} width={THUMB_W} height={THUMB_H} />}
+        <Button key={`scene-btn-${b}`} label={`${backdropName(b, lang)}${b === backdrop ? ' ✓' : ''}`} plain onPress={() => void setBackdrop($, b)} />
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" rowGap={e.surface === 'desktop' ? 1 : 0}>
+      {isApp ? <Text bold>{T.pickBar}</Text> : null}
       {rows}
       <Text dimColor>{T.pickHelp(STYLE_KEYS_HELP)}</Text>
       {e.surface === 'desktop' || e.surface === 'mobile' ? (
         <Box flexDirection="row" columnGap={2} alignItems="center">
           <Button key="style-theme" label={T.themeButton(isTheme)} onPress={() => void setTheme($, !isTheme)} />
           <Text dimColor wrap="truncate">{T.pickTheme}</Text>
+        </Box>
+      ) : null}
+      {isApp ? (
+        <Box flexDirection="column" rowGap={1}>
+          <Text bold>{T.pickScene}</Text>
+          <Text dimColor wrap="truncate">{T.pickSceneHint}</Text>
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
+            {BACKDROPS.map(card)}
+          </Box>
         </Box>
       ) : null}
       {e.surface === 'desktop' || e.surface === 'mobile' ? (
@@ -2990,6 +3151,16 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
                 {'Svg' in els && <els.Svg source={swatchSvg(id)} alt="" width={28} height={14} />}
                 <Button key={`palette-btn-${id}`} label={`${PALETTES[id].name[lang]}${id === palette ? ' ✓' : ''}`} plain onPress={() => void setPalette($, id)} />
               </Box>
+            ))}
+          </Box>
+        </Box>
+      ) : null}
+      {isApp ? (
+        <Box flexDirection="column" rowGap={1}>
+          <Text bold>{T.pickBlur}</Text>
+          <Box flexDirection="row" columnGap={3} alignItems="center">
+            {BLURS.map(b => (
+              <Button key={`blur-${b}`} label={`${T.blurName[b]}${b === blur ? ' ✓' : ''}`} plain onPress={() => void setBlur($, b)} />
             ))}
           </Box>
         </Box>
@@ -3050,7 +3221,7 @@ async function statusText($: EngineInterface): Promise<string> {
   const planned = plannedOf(f, list).length
   const crew = [running ? `${running} ${S.running}` : '', list.length - running ? `${list.length - running} ${S.done}` : '', planned ? `${planned} ${S.planned}` : ''].filter(Boolean)
   lines.push(`${S.agents}: ${crew.join(' · ') || S.noAgents}`)
-  lines.push(`${S.look}: ${STYLE_NAMES[styles.desktop]} ${S.inApp} · ${STYLE_NAMES[styles.terminal]} ${S.inTerminal} · ${sound ? S.soundOn : S.soundOff} · ${isTheme ? `${S.themeOn} (${PALETTES[await paletteOf($)].name[lang]})` : S.themeOff} · ${S.language} ${LANG_NAME[lang]}`)
+  lines.push(`${S.look}: ${STYLE_NAMES[styles.desktop]} ${S.inApp} · ${STYLE_NAMES[styles.terminal]} ${S.inTerminal} · ${sound ? S.soundOn : S.soundOff} · ${isTheme ? `${S.themeOn} (${PALETTES[await paletteOf($)].name[lang]} · ${backdropName(await backdropOf($), lang)} · ${T.blurName[await blurOf($)]})` : S.themeOff} · ${S.language} ${LANG_NAME[lang]}`)
   if (hidden) lines.push('', S.hidden)
   return lines.join('\n')
 }
@@ -3062,13 +3233,17 @@ const registerHud: Register = on => {
   // with crabs walking behind the chat. It reads only the style and the palette,
   // so the drawing never changes while Claude works: a new source reloads the
   // image, and the backdrop blinked at every step of a flow.
+  // The scene's name says which drawing it is (backdrops.ts), so a new pick is a
+  // new name and the app never shows a picture it kept from before.
   on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
     if (e.surface !== 'desktop' && e.surface !== 'mobile') return next(e)
-    if (e.props.scene !== SCENE) return next(e)
+    const named = parseScene(e.props.scene)
+    if (named === null) return next(e)
     const { Svg } = $.ui.resolve(e)
-    const [styles, palette] = await Promise.all([read($, styleA), paletteOf($)])
-    const source = sceneSvg(styles.desktop, palette, { crab, css: CRAB_CSS })
-    return <Svg source={source} alt={`crabhud: ${STYLE_NAMES[styles.desktop]}`} isInteractive />
+    if (isHs(named.scene)) return <Svg source={hsSvg(named.scene)} alt={HS[named.scene].alt} isInteractive />
+    const palette = asPalette(named.palette) ?? (await paletteOf($))
+    const source = sceneSvg(named.scene, palette, { crab, css: CRAB_CSS })
+    return <Svg source={source} alt={`crabhud: ${STYLE_NAMES[named.scene]}`} isInteractive />
   })
 
   on('session.measure', async ($, e, next) => {
@@ -3126,6 +3301,33 @@ const registerHud: Register = on => {
       if (id === null) return { text: T.noPalette(value, PALETTE_IDS.join(', ')) }
       await setPalette($, id)
       return { text: T.palette(PALETTES[id].name[(await read($, langA)) ?? 'en'], await read($, themeA)) }
+    }
+    if (/^(scene|background|fundo)$/i.test(arg)) {
+      // `/crabhud scene koipond` sets the background; a bare one opens the picker.
+      const lang = (await read($, langA)) ?? 'en'
+      const T = TEXT[lang]
+      const rest = e.args.trim().slice(arg.length).trim()
+      if (!rest) {
+        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        return {}
+      }
+      const b = asBackdrop(rest)
+      if (b === null) return { text: T.noScene(rest, BACKDROPS.join(', ')) }
+      await setBackdrop($, b)
+      return { text: T.scene(backdropName(b, lang), await read($, themeA)) }
+    }
+    if (/^(blur|desfoque)$/i.test(arg)) {
+      // `/crabhud blur light`; a bare one opens the picker.
+      const lang = (await read($, langA)) ?? 'en'
+      const T = TEXT[lang]
+      if (!value) {
+        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        return {}
+      }
+      const b = asBlur(value)
+      if (b === null) return { text: T.noBlur(value, BLURS.join(', ')) }
+      await setBlur($, b)
+      return { text: T.blur(T.blurName[b], await read($, themeA)) }
     }
     if (/^theme$/i.test(arg)) {
       // `/crabhud theme on` or `off`; a bare `/crabhud theme` flips it.
@@ -3232,7 +3434,7 @@ const registerHud: Register = on => {
     if (e.surface === 'desktop' && 'Svg' in els) {
       const { Svg } = els
       await read($, tickA)
-      const W = Math.max(240, (e.props.bodyColumns || 100) * 8 - 40)
+      const W = Math.max(240, (e.props.bodyColumns || 100) * pxPerCol(e.surface) - 40)
       const hud = hudSvg(props, W, props.expanded)
       const toggle = async () => {
         const open = !(await read($, expandedA))

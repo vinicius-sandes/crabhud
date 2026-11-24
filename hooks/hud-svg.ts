@@ -209,14 +209,16 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   const footer = spendLine(p, words)
   const H = RH * (rows + 1) + 6 + (footer ? 18 : 0)
   const L = 22
-  const BX = 116
   const parts: string[] = []
   const stateWord = p.working ? { t: words.working, c: ORANGE } : alert ? { t: words.alert, c: RED } : { t: words.ready, c: GREEN }
+  // The labels' column is as wide as its widest label, so the bars get the rest.
+  const otherLabel = (l: Lim) => (l?.kind === 'spend_limit' ? words.spend : (l?.kind ?? ''))
+  const BX = Math.round(L + Math.max(textWidth(stateWord.t, 12.5, true), ...[words.context, words.fiveHour, words.sevenDay, ...others.map(otherLabel)].map(t => textWidth(t, 12.5))) + 14)
   parts.push(status(0, 14), T(L, 18, stateWord.t, { bold: true, fill: stateWord.c }), T(BX, 18, p.model, { cls: 't', bold: true }))
   const ex = BX + textWidth(p.model, 12.5, true) + 16
-  parts.push(T(ex, 18, words.effort, { cls: 'm' }), effort(ex + textWidth(words.effort, 12.5) + 7, 18))
+  parts.push(effort(ex, 18))
   parts.push(`<text x="${W - 2}" y="18" text-anchor="end" font-family="${FONT}" font-size="12.5"><tspan class="m">${xml(words.chat)} </tspan><tspan${overBudget(p) ? ` fill="${AMBER}"` : ' class="t"'} font-weight="600">${xml(cost)}</tspan></text>`)
-  const lines: string[] = [`${stateWord.t} · ${p.model} · ${words.effort} ${effortText} · ${words.chat} ${cost}`]
+  const lines: string[] = [`${stateWord.t} · ${p.model} ${effortText} · ${words.chat} ${cost}`]
   const row = (i: number, label: string, v: number | null, base: string, detail: string, warn = '') => {
     const y = RH * i + 6
     const c = tone(v ?? 0, base)
@@ -244,7 +246,7 @@ export function hudSvg(p: HudProps, W: number, open: boolean): { svg: string; he
   row(1, words.context, ctxP, PURPLE, ctxDetail)
   row(2, words.fiveHour, five?.percent ?? null, GREEN, limitDetail(five), runsOut(five, false))
   row(3, words.sevenDay, week?.percent ?? null, GREEN, limitDetail(week), runsOut(week, false))
-  others.forEach((l, i) => row(4 + i, l.kind === 'spend_limit' ? words.spend : l.kind, l.percent, GREEN, limitDetail(l)))
+  others.forEach((l, i) => row(4 + i, otherLabel(l), l.percent, GREEN, limitDetail(l)))
   if (footer) {
     parts.push(T(L, H - 8, footer, { cls: 'm', size: 11.5 }))
     lines.push(footer)

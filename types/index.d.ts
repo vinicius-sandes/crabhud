@@ -183,10 +183,14 @@ declare module 'claude-code' {
       turn: TurnStats | null
       /** What the chats on this machine spent, by day (YYYY-MM-DD, local). */
       spend: Record<string, number>
-      /** `/crabhud theme on`: the app's look follows the bar style; off by default. */
+      /** `/crabhud theme on`: the app wears the palette, background and blur picked; off by default. */
       theme: boolean
       /** `/crabhud palette` or the picker: the theme's colors (an id from hooks/palettes.ts). */
       palette: string
+      /** `/crabhud scene` or the picker: the theme's background (hooks/backdrops.ts); `auto` follows the bar. */
+      backdrop: string
+      /** `/crabhud blur` or the picker: how much the panels blur the background (sharp, light, medium). */
+      blur: string
       /** `/crabhud demo` on until this time (ms), else 0. */
       demo: number
     }

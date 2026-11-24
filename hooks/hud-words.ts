@@ -27,10 +27,10 @@ export const WORDS = {
     effort: 'effort',
     chat: 'chat',
     context: 'context',
-    fiveHour: '5h limit',
-    sevenDay: '7d limit',
+    fiveHour: '5h',
+    sevenDay: '7d',
     spend: 'spend',
-    resetsIn: (t: string) => `↻ resets in ${t}`,
+    resetsIn: (t: string) => `↻ ${t}`,
     reset: '↻ reset',
     noReading: 'no reading yet',
     account: 'account',
@@ -50,10 +50,10 @@ export const WORDS = {
     effort: 'esforço',
     chat: 'chat',
     context: 'contexto',
-    fiveHour: 'limite 5h',
-    sevenDay: 'limite 7d',
+    fiveHour: '5h',
+    sevenDay: '7d',
     spend: 'gasto',
-    resetsIn: (t: string) => `↻ reseta em ${t}`,
+    resetsIn: (t: string) => `↻ ${t}`,
     reset: '↻ resetou',
     noReading: 'sem leitura ainda',
     account: 'conta',
@@ -87,14 +87,29 @@ export function fmtTok(n: number): string {
 type Words = (typeof WORDS)[keyof typeof WORDS]
 type Paced = { kind: string; percent: number; resetsAt: number | null; rate?: number | null; isReset?: boolean }
 
+const WEEK_MS = 7 * 24 * 3600000
+const WEEK_PACE_MIN_MS = 6 * 3600000
+/** The 7-day window's average fill, in % per hour, or null before six hours. */
+function weekRate(l: Paced, now: number): number | null {
+  if (l.resetsAt == null) return null
+  const since = now - (l.resetsAt - WEEK_MS)
+  if (since < WEEK_PACE_MIN_MS || since > WEEK_MS) return null
+  return (l.percent * 3600000) / since
+}
+
 /** How fast a window fills (+N%/h for 5h, +N%/day for 7d) and, only when that
  *  comes before its reset, when it runs out at that pace. */
 export function pace(l: Paced | undefined, now: number, w: Words, tight: boolean): { rate: string; out: string } {
-  if (l?.rate == null || l.rate < 0.05 || l.isReset) return { rate: '', out: '' }
+  if (!l || l.isReset) return { rate: '', out: '' }
   const day = l.kind === 'seven_day'
-  const v = day ? l.rate * 24 : l.rate
+  // The 7-day pace is the window's own average (used so far over the time since
+  // it opened), not the last 90 minutes times 24, which read as if one worked all
+  // day. It shows once the window is six hours old.
+  const rateH = day ? weekRate(l, now) : l.rate
+  if (rateH == null || rateH < 0.05) return { rate: '', out: '' }
+  const v = day ? rateH * 24 : rateH
   const rate = `+${v < 10 ? Math.round(v * 10) / 10 : Math.round(v)}%${day ? w.perDay : w.perHour}`
-  const ms = ((100 - l.percent) / l.rate) * 3600000
+  const ms = ((100 - l.percent) / rateH) * 3600000
   return { rate, out: l.resetsAt != null && now + ms < l.resetsAt ? w.runsOut(fmtLeft(ms, tight, w.now)) : '' }
 }
 

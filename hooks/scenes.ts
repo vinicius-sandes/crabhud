@@ -196,7 +196,7 @@ type Scene = {
   /** Layers under the veil, back to front; walkers slot in between. */
   back: string[]
   walkers: Walker[]
-  /** How much the middle is calmed, 0 to 1. */
+  /** How much the middle was calmed, 0 to 1; unused since 3.3.0 (the reading band calms it). */
   veil?: number
   /** Over the veil: the edges' crabs (the resting one) and scene moments. */
   top: string
@@ -921,7 +921,6 @@ export const sceneSvg = (style: HudStyle, palette: PaletteId, art: CrabArt): str
   const walk = parade(sc.walkers, art, Math.max(0, ORDER.indexOf(style)))
   const last = sc.back.length - 1
   const layers = sc.back.map((layer, i) => layer + walk.marks.filter((_, j) => (sc.walkers[j]?.z ?? last) === i).join(''))
-  const veil = sc.veil ?? 0.55
   const light = sc.light?.(tn.light) ?? ''
   const css = `${BASE_CSS}
 ${toneCss(tn.dark)}
@@ -929,20 +928,25 @@ ${toneCss(tn.dark)}
 ${sc.css ?? ''}
 ${walk.css}
 @media (prefers-reduced-motion: reduce){[class^="bg"],[class*=" bg"]{animation:none!important}}`
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">
 <style>${css}</style>${art.css}
 <defs>
 <linearGradient id="bgSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="bgs0"/><stop offset="1" class="bgs1"/></linearGradient>
 <radialGradient id="bgGA"><stop offset="0" class="bgsA" stop-opacity=".5"/><stop offset="1" class="bgsA" stop-opacity="0"/></radialGradient>
 <radialGradient id="bgGB"><stop offset="0" class="bgsB" stop-opacity=".5"/><stop offset="1" class="bgsB" stop-opacity="0"/></radialGradient>
 <radialGradient id="bgGlowLow" cx=".5" cy="1" r=".9"><stop offset="0" class="bgsA" stop-opacity=".22"/><stop offset="1" class="bgsA" stop-opacity="0"/></radialGradient>
-<radialGradient id="bgVeil" gradientUnits="userSpaceOnUse" cx="800" cy="560" r="600" gradientTransform="matrix(.78 0 0 1.1 176 -56)"><stop offset="0" class="bgsV"/><stop offset=".55" class="bgsV" stop-opacity=".9"/><stop offset="1" class="bgsV" stop-opacity="0"/></radialGradient>
 <linearGradient id="bgFoot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="bgsV" stop-opacity="0"/><stop offset="1" class="bgsV" stop-opacity=".8"/></linearGradient>
 ${sc.defs ?? ''}
 </defs>
 <rect width="${W}" height="${H}" fill="url(#bgSky)"/>
 ${layers.join('\n')}
-<rect width="${W}" height="${H}" fill="url(#bgVeil)" opacity="${veil}"/><rect y="830" width="${W}" height="170" fill="url(#bgFoot)"/>
+<rect y="830" width="${W}" height="170" fill="url(#bgFoot)"/>
 ${sc.top}
 </svg>`
+  // 3.3.0: no glows behind the words. The app lays its own veil behind the chat,
+  // in the glass's opacity, so the scene carries none of its own.
+  return calm(svg)
 }
+
+/** The soft glows (bgGA, bgGB, bgGlowLow) out: under the chat they read as smudges. */
+const calm = (svg: string): string => svg.replace(/<(?:circle|ellipse|rect)\b[^>]*fill="url\(#bg(?:GA|GB|GlowLow)\)"[^>]*\/>/g, '')

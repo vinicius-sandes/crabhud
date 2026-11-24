@@ -141,6 +141,47 @@ export function barSvg(b: BarSvgInput): string {
   const fits = (count: number) => count >= 2 && w / count >= (style === 'dots' ? Math.max(5, h * 0.75) : 5)
   const count = b.steps && fits(b.steps) ? b.steps : Math.max(4, Math.min(40, Math.round(w / unit)))
 
+  // Where the drawing's filled part ends at a percent. Styles drawn in whole
+  // pieces (segments, dots, stairs, classic, spark) can end past or short of the
+  // exact percent; the tag ends there, so no piece peeks out after it.
+  const reachAt = (pct: number): number => {
+    const f = Math.max(0, Math.min(1, pct / 100))
+    switch (style) {
+      case 'segments': {
+        const gap = h >= 10 ? 2 : 1.5
+        const k = Math.round(f * count)
+        return k ? k * ((w - gap * (count - 1)) / count + gap) - gap : 0
+      }
+      case 'dots': {
+        const pitch = w / count
+        const r = Math.max(1.4, Math.min(h / 2 - (h >= 10 ? 2 : 0.6), pitch * 0.34))
+        const v = f * count
+        const whole = Math.floor(v)
+        // The dot being filled (half, or the live pulse) counts as drawn.
+        const k = whole < count && (v - whole > 0.25 || (b.live && pct < 100)) ? whole + 1 : whole
+        return k ? Math.min(w, pitch * (k - 0.5) + r + 1) : 0
+      }
+      case 'stairs': {
+        const gap = h >= 10 ? 1.5 : 1
+        const n = Math.max(3, Math.floor((w + gap) / (Math.max(3, Math.round(h * 0.7)) + gap)))
+        const k = Math.round(f * n)
+        return k ? k * ((w + gap) / n) - gap : 0
+      }
+      case 'classic': {
+        const cw = Math.max(3, Math.round(h * 0.55))
+        return Math.round(f * Math.max(4, Math.floor(w / cw))) * cw
+      }
+      case 'spark': {
+        const pitch = h >= 12 ? 5 : 4
+        const n = Math.max(4, Math.floor(w / pitch))
+        const k = Math.round(f * n)
+        return k ? (k - 1) * pitch + (w - n * pitch) / 2 + 0.75 + Math.max(1.5, pitch - 1.5) : 0
+      }
+      default:
+        return Math.round(w * f)
+    }
+  }
+
   switch (style) {
     case 'segments': {
       const gap = h >= 10 ? 2 : 1.5
@@ -341,9 +382,9 @@ export function barSvg(b: BarSvgInput): string {
     const tw = Math.min(w, Math.round(16 + textWidth(b.label, size) * 1.08))
     // The tag ends where the fill does, but never starts left of its floor.
     const tagX = (pct: number, fill: number) => Math.max(0, Math.min(w - tw, Math.max(fill - tw, Math.round(w * (b.tagFloor?.(pct) ?? 0)))))
-    const tx = tagX(p, fillW)
+    const tx = tagX(p, reachAt(p))
     const fromP = b.from ? Math.max(0, Math.min(100, b.from.p)) : p
-    const fromTx = b.from ? tagX(fromP, Math.round((w * fromP) / 100)) : tx
+    const fromTx = b.from ? tagX(fromP, reachAt(fromP)) : tx
     const glide = b.from && b.from.age >= 0 && b.from.age < GLIDE_MS && Math.abs(fromTx - tx) > 0.5
     // Classic's tag is square like its blocks; neon's is dark with a glowing rim.
     const neon = style === 'neon'

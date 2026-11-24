@@ -1,4 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { WORDS, pace } from '../hooks/hud-words'
+import { PALETTE_IDS, PALETTES } from '../hooks/palettes'
+import { vivid } from '../hooks/theme'
+import { HS, HS_KEYS, hsSvg } from '../hooks/backdrops'
+import { STYLE_NAMES } from '../hooks/bar-styles'
 
 // The test runner has a console; the engine's types leave it out.
 declare const console: { log: (...args: unknown[]) => void }
@@ -210,7 +215,9 @@ test('labels follow the picked language', async ($, on) => {
   const open = await shown(ui)
   console.log(`pt-BR expanded: ${open}`)
   expect(open).toContain('contexto')
-  expect(open).toContain('reseta em')
+  // The ↻ already reads "resets": only the time follows it.
+  expect(open).toContain('↻ 2h')
+  expect(open).not.toContain('reseta em')
   await ui.unmount()
 })
 
@@ -246,7 +253,13 @@ test('ultracode shimmers behind the band and stays readable', async ($, on) => {
     const b = await shown(ui)
     console.log(`${surface} ultracode: ${b}`)
     expect(b).toContain('Ultracode')
-    expect(b).toContain('$4.32')
+    // The cost: at 100 columns, with the 7-day pace on the row, it takes turns
+    // with the 5-hour reset by the wall clock, which a test cannot hold; at 120
+    // everything fits and it stays.
+    const wide = await $.ui.mount({ plugin: 'crabhud', surface, ...BAND } as any)
+    await fit(wide, { columns: 120, rows: 1, in: 'hud' })
+    expect(await shown(wide)).toContain('$4.32')
+    await wide.unmount()
     expect(a === b).toBe(false)
     // The bars take the Ultracode palette: several colours, and they flow.
     const barColors = async () =>
@@ -340,7 +353,7 @@ test('a click anywhere expands, another collapses', async ($, on) => {
   const open = await shown(ui)
   console.log(`terminal expanded: ${open}`)
   expect(open).toContain('context')
-  expect(open).toContain('resets in')
+  expect(open).toContain('↻ 2h')
   expect(open).toContain('account')
   await (ui as any).pointer({ type: 'down', x: 5, y: 2, button: 'left', in: 'hud' })
   expect(await shown(ui)).not.toContain('context')
@@ -350,7 +363,7 @@ test('a click anywhere expands, another collapses', async ($, on) => {
   await toggleHud(app)
   const appOpen = await shown(app)
   console.log(`desktop expanded: ${appOpen}`)
-  for (const s of ['context', 'resets in', 'account']) expect(appOpen).toContain(s)
+  for (const s of ['context', '↻ 2h', 'account']) expect(appOpen).toContain(s)
   await app.unmount()
   const again = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(await shown(again)).toContain('context')
@@ -686,6 +699,34 @@ test('/crabhud style opens the picker: twelve live previews (Client in the termi
   }
 })
 
+test('the picker shows the theme: 22 background cards, the colors and the blur; a card re-dresses the app', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en' })
+  panes(on)
+  const looks: any[] = []
+  on('theme.set', ((_$: unknown, e: any) => {
+    looks.push(e)
+    return { value: { isDrawn: true, requestId: 'look' } }
+  }) as any)
+  await start($, on)
+  await $.command.run({ command: 'crabhud', args: 'theme on' } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PICKER } as any)
+  const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.props.label))
+  const cards = ['Follows the bar ✓', 'No scene', ...ALL_STYLES.map(st => STYLE_NAMES[st as keyof typeof STYLE_NAMES]), ...HS_KEYS.map(k => HS[k].name)]
+  for (const c of cards) expect(labels).toContain(c)
+  expect(labels).toContain('Sharp ✓')
+  const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
+  for (const w of ['Bar', 'Background', 'Colors', 'Blur']) expect(words).toContain(w)
+  const before = looks.length
+  await ui.press({ key: 'scene-btn-jellyfish' })
+  expect(looks.length).toBe(before + 1)
+  expect(looks.at(-1).backdrop.scene).toBe('crabhud-hs-jellyfish-2')
+  await ui.press({ key: 'blur-light' })
+  expect(looks.at(-1).backdrop.glass.blur).toBe(8)
+  await ui.unmount()
+  // Every one of Handsher's wallpapers, with the band, stays under the app's 128 KB.
+  for (const k of HS_KEYS) expect(hsSvg(k).length).toBeLessThan(131072)
+})
+
 test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => {
   world(on)
   panes(on)
@@ -739,7 +780,8 @@ const PANEL = {
   props: { title: 'Agents', isFocused: false, bodyColumns: 60, placement: 'side' },
 } as const
 
-const progressRow = async (ui: any) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Sample project'))
+// The bar's own drawing (its alt reads "title: tag…"), not the title's line above it.
+const progressRow = async (ui: any) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Sample project:'))
 const allText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join('')
 
 test('the progress bar takes the app style in the app and the terminal style in the terminal', async ($, on) => {
@@ -931,7 +973,9 @@ test('a card finished over a minute ago shrinks to one line; a failed one keeps 
   const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...PANEL } as any)
   const text = await allText(term)
   console.log(`terminal panel, one shrunk: ${text}`)
-  expect(text).toMatch(/Rename the helpers✓≈\$0\.00 0:00/)
+  // One time format all over the panel: 45s, 14m48s, 1h05m.
+  expect(text).toMatch(/Rename the helpers✓≈\$0\.00 0s/)
+  expect(text).not.toMatch(/\d:\d\d/)
   await term.unmount()
 })
 
@@ -1061,7 +1105,8 @@ test('sounds are off by default; /crabhud sound on plays the chime when Claude w
   expect(played).toEqual(['sounds/wait.wav'])
 })
 
-test("the HUD shows how fast a limit fills, amber when it runs out before its reset", async ($, on) => {
+// It walks the clock twenty minutes ahead, which takes a few seconds on its own.
+test("the HUD shows how fast a limit fills, amber when it runs out before its reset", { timeoutMs: 15000 }, async ($, on) => {
   const { clock } = world(on)
   panes(on)
   await start($, on)
@@ -1319,7 +1364,7 @@ test('the closed HUD draws a ring per reading: in the app and in the terminal', 
   await term.unmount()
 })
 
-test("the panel adds today's and this month's spend, summed over the chats", async ($, on) => {
+test("today's and this month's spend stay in the open HUD, not in the panel", async ($, on) => {
   const d = new Date(now)
   const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   // Another chat already spent $2.00 today.
@@ -1330,9 +1375,17 @@ test("the panel adds today's and this month's spend, summed over the chats", asy
   await $.session.measure({ ...measure, cost: { usd: 5 } })
   const pane = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...PANEL } as any)
   const text = await allText(pane)
-  expect(text).toContain('Today ≈$2.68')
-  expect(text).toContain('This month ≈$2.68')
+  expect(text).not.toContain('Today')
+  expect(text).not.toContain('This month')
   await pane.unmount()
+  // The open HUD sums them, over the chats.
+  const hud = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
+  await fit(hud, { columns: 100, rows: 6, in: 'hud' })
+  await (hud as any).pointer({ type: 'down', x: 40, y: 0, button: 'left', in: 'hud' })
+  const open = await shown(hud)
+  expect(open).toContain('today ≈$2.68')
+  expect(open).toContain('month ≈$2.68')
+  await hud.unmount()
 })
 
 test('/crabhud status sums it all up as text', async ($, on) => {
@@ -1378,7 +1431,7 @@ test('/crabhud demo plays sample bars and agents, then puts everything back', as
   await after.unmount()
 })
 
-test('/crabhud theme dresses the app: the style picks the backdrop and glass, the palette the colors, and the backdrop holds still', async ($, on) => {
+test('/crabhud theme dresses the app: a background apart from the bar, the palette the colors, the blur the frost, and the backdrop holds still', async ($, on) => {
   world(on)
   panes(on)
   const looks: any[] = []
@@ -1398,39 +1451,205 @@ test('/crabhud theme dresses the app: the style picks the backdrop and glass, th
   const on1 = (await $.command.run({ command: 'crabhud', args: 'theme on' } as any)) as any
   expect(String(on1.text)).toContain('crabhud theme on')
   expect(looks.length).toBe(1)
-  expect(looks[0].backdrop.scene).toBe('crabhud')
+  // By default the background follows the bar style, sharp: blur 4 at 55%, no tint of its own.
+  expect(looks[0].backdrop.scene).toBe('crabhud-pixel-claude-2')
+  expect(looks[0].backdrop.glass).toEqual({ blur: 4, opacity: 0.55 })
   expect(Object.keys(looks[0].colors).length).toBeGreaterThan(0)
 
-  // A new style re-dresses the app: glass is the clearest, and the colors stay the palette's.
+  // A new style brings its scene along; the colors stay the palette's.
   await $.command.run({ command: 'crabhud', args: 'style glass' } as any)
   expect(looks.length).toBe(2)
-  expect(looks[1].backdrop.glass.opacity).toBeLessThan(looks[0].backdrop.glass.opacity)
+  expect(looks[1].backdrop.scene).toBe('crabhud-glass-claude-2')
   expect(JSON.stringify(looks[1].colors)).toBe(JSON.stringify(looks[0].colors))
 
-  // A palette changes the colors, by its id or its name.
+  // A palette changes the colors, by its id or its name, and the scene's name with them.
   const pal = (await $.command.run({ command: 'crabhud', args: 'palette mint' } as any)) as any
   expect(String(pal.text)).toContain('Mint on black')
   expect(looks.length).toBe(3)
+  expect(looks[2].backdrop.scene).toBe('crabhud-glass-mint-2')
   expect(JSON.stringify(looks[2].colors)).not.toBe(JSON.stringify(looks[1].colors))
   expect(String(((await $.command.run({ command: 'crabhud', args: 'palette nope' } as any)) as any).text)).toContain('No palette')
 
-  // The backdrop: the style's scene with crabs in it, the same drawing while a flow moves.
-  const back = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', component: 'Backdrop', props: { scene: 'crabhud', plugin: 'crabhud' } } as any)
+  // The backdrop: the scene its name says, with crabs and no band or veil of its own (the app lays its veil),
+  // the same drawing while a flow moves.
+  const back = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', component: 'Backdrop', props: { scene: 'crabhud-glass-mint-2', plugin: 'crabhud' } } as any)
   const first = String((await back.findAll({ type: 'Svg' }))[0]?.props.source)
   expect(String((await back.findAll({ type: 'Svg' }))[0]?.props.alt)).toContain('Glass')
   expect(first).toContain('c-')
+  expect(first).not.toContain('rdBand')
+  expect(first).not.toContain('url(#bgVeil)')
+  expect(first).not.toMatch(/fill="url\(#bg(GA|GB|GlowLow)\)"/)
   expect(first.length).toBeLessThan(131072)
   await $.tool.call(PROGRESS as any)
   await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
   expect(String((await back.findAll({ type: 'Svg' }))[0]?.props.source)).toBe(first)
   await back.unmount()
 
-  expect(String(((await $.command.run({ command: 'crabhud', args: 'status' } as any)) as any).text)).toContain('theme on')
+  // A background of its own, apart from the bar: one of crabhud's or one of Handsher's,
+  // which keeps his window's tone under the glass.
+  await $.command.run({ command: 'crabhud', args: 'scene dots' } as any)
+  expect(looks.at(-1).backdrop.scene).toBe('crabhud-dots-mint-2')
+  const koi = (await $.command.run({ command: 'crabhud', args: 'scene Koi Pond' } as any)) as any
+  expect(String(koi.text)).toContain('Koi Pond')
+  expect(looks.at(-1).backdrop.scene).toBe('crabhud-hs-koiPond-2')
+  expect(looks.at(-1).backdrop.glass.tint).toBeUndefined()
+  expect(looks.at(-1).overrideColorScheme).toBe('dark')
+  await $.command.run({ command: 'crabhud', args: 'scene clouds' } as any)
+  expect(looks.at(-1).overrideColorScheme).toBe('light')
+  const hs = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', component: 'Backdrop', props: { scene: 'crabhud-hs-clouds-2', plugin: 'crabhud' } } as any)
+  expect(String((await hs.findAll({ type: 'Svg' }))[0]?.props.source)).not.toContain('rdBand')
+  await hs.unmount()
+  // Someone else's scene is left alone.
+  const other = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', component: 'Backdrop', props: { scene: 'aw-clouds-4', plugin: 'ascii-wallpapers', glass: false } } as any)
+  expect((await other.findAll({ type: 'Svg' })).length).toBe(0)
+  await other.unmount()
+  // No scene: the palette's colors alone.
+  await $.command.run({ command: 'crabhud', args: 'scene none' } as any)
+  expect(looks.at(-1).backdrop).toBeUndefined()
+  expect(String(((await $.command.run({ command: 'crabhud', args: 'scene nope' } as any)) as any).text)).toContain('No background')
+  // The blur, by its name.
+  await $.command.run({ command: 'crabhud', args: 'scene auto' } as any)
+  await $.command.run({ command: 'crabhud', args: 'blur medium' } as any)
+  expect(looks.at(-1).backdrop.glass.blur).toBe(14)
+  expect(String(((await $.command.run({ command: 'crabhud', args: 'blur nope' } as any)) as any).text)).toContain('No blur')
+
+  const status = String(((await $.command.run({ command: 'crabhud', args: 'status' } as any)) as any).text)
+  expect(status).toContain('theme on')
+  expect(status).toContain('Follows the bar')
+  expect(status).toContain('Medium')
   const off = (await $.command.run({ command: 'crabhud', args: 'theme off' } as any)) as any
   expect(String(off.text)).toContain('theme off')
   expect(cleared).toBe(1)
-  // Off, a new style or palette leaves the app's look alone.
+  // Off, a new style, palette, background or blur leaves the app's look alone.
+  const sent = looks.length
   await $.command.run({ command: 'crabhud', args: 'style dots' } as any)
   await $.command.run({ command: 'crabhud', args: 'palette ocean' } as any)
-  expect(looks.length).toBe(3)
+  await $.command.run({ command: 'crabhud', args: 'scene moonlit' } as any)
+  await $.command.run({ command: 'crabhud', args: 'blur light' } as any)
+  expect(looks.length).toBe(sent)
+})
+
+test('the accent words take the strong level: the palette hue, readable on the page', async () => {
+  // As in the approved table (the "Forte" column).
+  expect(vivid(PALETTES.magenta.accent, 'dark')).toBe('#ef91fd')
+  expect(vivid(PALETTES.magenta.accent, 'light')).toBe('#a604be')
+  expect(vivid(PALETTES.claude.accent, 'dark')).toBe('#fdac91')
+  expect(vivid(PALETTES.claude.accent, 'light')).toBe('#be3204')
+  for (const id of PALETTE_IDS) {
+    const a = PALETTES[id].accent
+    expect(vivid(a, 'dark')).not.toBe(a)
+    expect(vivid(a, 'light')).toMatch(/^#[0-9a-f]{6}$/)
+  }
+})
+
+// ---- 3.3.0: the band end to end, the tag in whole words, the 7-day pace, the panel's top ----
+
+test('on a Mac the band takes 8.8 px a column, and every row of it can shrink', async ($, on) => {
+  const widthAt = async (home: string) => {
+    world(on, { HOME: home }, new Map(), { language: 'en' })
+    panes(on)
+    await start($, on)
+    await $.tool.call(PROGRESS as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+    const row = await progressRow(ui)
+    // No size on the Svg: the app draws it at its own width, or narrower.
+    expect(row.props.width).toBeUndefined()
+    const art = await ui.find({ type: 'Box', key: 'crab-bar-row-art' })
+    expect(art?.props.flexShrink).toBe(1)
+    expect(art?.props.minWidth).toBe(0)
+    const box = await ui.find({ type: 'Box', key: 'crab-bar-row' })
+    expect(box?.props.flexWrap).toBe('nowrap')
+    const w = hudSize(row).width
+    await ui.unmount()
+    return w
+  }
+  // 100 columns at 8.8 px, less 8: the bar has its own line, the buttons sit on the title's.
+  expect(await widthAt('/Users/me')).toBe(872)
+})
+
+test('the bar names its groups whole or not at all, and the tag keeps the step whole', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en' })
+  panes(on)
+  await start($, on)
+  await $.tool.call({
+    tool: 'mcp__crabhud__progress',
+    title: 'A long title for a small job that goes on',
+    done: 2,
+    groups: [
+      { name: 'Setup', steps: ['one', 'two'] },
+      { name: 'Audit', steps: ['Manual changes and notes', 'check'] },
+      { name: 'B-roll', steps: ['x'] },
+      { name: 'Motion', steps: ['y', 'z'] },
+      { name: 'Apply', steps: Array.from({ length: 7 }, (_, i) => `a${i}`) },
+    ],
+  } as any)
+  const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
+  const src = String((await rowOf(ui, 'A long title for a small job that goes on'))?.props.source)
+  // Away from a Mac (HOME under /home) the band counts 8 px a column: 800 less 8.
+  expect(hudSize(await rowOf(ui, 'A long title for a small job that goes on')).width).toBe(792)
+  // The title has its own line, whole, with the buttons at its right; the bar draws none.
+  const title = (await ui.findAll({ type: 'Svg' })).find((x: any) => x.props.alt === 'A long title for a small job that goes on')
+  expect(String(title?.props.source)).toContain('>A long title for a small job that goes on<')
+  const head = await ui.find({ type: 'Box', key: 'crab-bar-head' })
+  expect(head?.props.flexWrap).toBe('nowrap')
+  expect(JSON.stringify(head)).toContain('crab-dismiss')
+  // Every group gets its name under the bar now that it runs end to end.
+  for (const n of ['Setup', 'B-roll', 'Motion', 'Apply']) expect(src).toContain(`>${n}<`)
+  const texts = [...src.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1] ?? '')
+  console.log(`bar texts: ${texts.join(' | ')}`)
+  // Never a lone "…", nor a name cut to fewer than four letters.
+  expect(texts.some(t => t === '…' || /^.{0,3}…$/.test(t))).toBe(false)
+  // The group in progress, in bold with its count; the others by name alone.
+  expect(src).toMatch(/font-weight="600"[^>]*>Audit 0\/2</)
+  expect(texts).not.toContain('Setup 2/2')
+  // The step on the tag, whole.
+  expect(src).toContain('Manual changes and notes · 2/14')
+  // The title has no dot before it, and the percent is gone from the drawing (the alt keeps it).
+  expect(src).not.toMatch(/>\d+%</)
+  expect(String((await rowOf(ui, 'A long title for a small job that goes on'))?.props.alt)).toMatch(/\d+%/)
+  await ui.unmount()
+})
+
+test("the 7-day pace is the window's own average, and waits six hours", () => {
+  const w = WORDS.en
+  const t = Date.now()
+  const week = 7 * 24 * 3600000
+  // Open 3 days, 30% used: 10%/day, and it lasts past the reset (no "runs out").
+  const calm = pace({ kind: 'seven_day', percent: 30, resetsAt: t + week - 3 * 24 * 3600000, rate: 9 }, t, w, false)
+  expect(calm.rate).toBe('+10%/day')
+  expect(calm.out).toBe('')
+  // Open 2 days, 60% used: 30%/day runs out in 1d 8h, before the reset in 5 days.
+  const fast = pace({ kind: 'seven_day', percent: 60, resetsAt: t + week - 2 * 24 * 3600000, rate: 1 }, t, w, false)
+  expect(fast.rate).toBe('+30%/day')
+  expect(fast.out).toBe('runs out in 1d 8h')
+  // Under six hours old: no pace yet, whatever the last 90 minutes said.
+  expect(pace({ kind: 'seven_day', percent: 5, resetsAt: t + week - 5 * 3600000, rate: 4 }, t, w, false).rate).toBe('')
+  // The 5-hour window keeps the last 90 minutes.
+  expect(pace({ kind: 'five_hour', percent: 20, resetsAt: t + 3600000, rate: 12 }, t, w, false).rate).toBe('+12%/h')
+})
+
+test('the panel: no tiles, the crew on the usage line, Collapse on the top row', async ($, on) => {
+  world(on, {}, new Map(), { language: 'en' })
+  panes(on)
+  on('agent.spawn', () => ({ agentId: 'agent-1', model: 'claude-sonnet-5-5' }) as any)
+  await start($, on)
+  await $.tool.call(PROGRESS as any)
+  await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'a', description: 'Write the notes', subagentType: 'crab-light' } as any)
+  const pane = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
+  const svgs = await pane.findAll({ type: 'Svg' })
+  const all = svgs.map((x: any) => String(x.props.source)).join('')
+  expect(all).not.toContain('class="tile"')
+  // One agent, said in the singular.
+  const usage = svgs.find((x: any) => String(x.props.source).includes('1 agent ·'))
+  expect(usage).toBeDefined()
+  // The tokens are read aloud only.
+  expect(String(usage?.props.alt)).toContain('tokens')
+  expect(String(usage?.props.source)).not.toContain('tokens')
+  // The flow's title and Collapse share the first row.
+  const head = await pane.find({ type: 'Box', key: 'head' })
+  expect(head?.props.flexWrap).toBe('nowrap')
+  expect(JSON.stringify(head)).toContain('Collapse')
+  // The group's count sits right after its name.
+  expect(all).toMatch(/>start<\/tspan><tspan[^>]*> 5\/8</)
+  await pane.unmount()
 })
