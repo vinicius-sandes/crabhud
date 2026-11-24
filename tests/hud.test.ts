@@ -95,6 +95,12 @@ async function shown(ui: any): Promise<string> {
 async function hudSvg(ui: any): Promise<any> {
   return (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.source).includes('data-hud='))
 }
+// The drawing's own size, from its markup: the Svg gets no width, so the app
+// draws it at this size, or narrower when the band has less room.
+function hudSize(svg: any): { width: number; height: number } {
+  const tag = String(svg.props.source).match(/<svg[^>]*>/)?.[0] ?? ''
+  return { width: Number(tag.match(/ width="([\d.]+)"/)?.[1]), height: Number(tag.match(/ height="([\d.]+)"/)?.[1]) }
+}
 // Sizes the terminal's Client; the app's drawing takes the band's width.
 async function fit(ui: any, size: { columns: number; rows: number; in: string }): Promise<void> {
   if ((await ui.findAll({ type: 'Client' })).length) await ui.resize(size)
@@ -126,13 +132,19 @@ test('desktop: the HUD is one drawing, its bars at the readings', async ($, on) 
   const closed = await hudSvg(ui)
   console.log(`desktop closed: ${closed.props.alt}`)
   for (const s of ['ctx 31%', '5h 20%', '7d 58%', '$4.32']) expect(closed.props.alt).toContain(s)
-  expect(closed.props.width <= 100 * 8).toBe(true)
+  expect(hudSize(closed).width <= 100 * 8).toBe(true)
+  // The px-per-column guess can overshoot the band (narrower cells on some
+  // systems), so the drawing shrinks and ▾/▴ never does, on a row that never wraps.
+  expect(closed.props.width).toBeUndefined()
+  expect((await ui.find({ type: 'Box', key: 'hud' }))?.props.flexWrap).toBe('nowrap')
+  expect((await ui.find({ type: 'Box', key: 'hud-art' }))?.props).toMatchObject({ flexShrink: 1, minWidth: 0 })
+  expect((await ui.find({ type: 'Box', key: 'hud-toggle-box' }))?.props.flexShrink).toBe(0)
   expect((await ui.find({ key: 'hud-toggle' }))?.props.label).toBe('▾')
   await toggleHud(ui)
   const open = await hudSvg(ui)
   // Open: each bar carries its percent on a tag, and the drawing is taller.
   for (const p of ['31%', '20%', '58%']) expect(String(open.props.source)).toContain(`>${p}</text>`)
-  expect(open.props.height > closed.props.height).toBe(true)
+  expect(hudSize(open).height > hudSize(closed).height).toBe(true)
   expect((await ui.find({ key: 'hud-toggle' }))?.props.label).toBe('▴')
   await ui.unmount()
 })
@@ -272,9 +284,10 @@ test('compact fits every width and the cost is never cut', async ($, on) => {
     const d = await hudSvg(app)
     const src = String(d.props.source)
     const costX = Number(src.match(/x="([\d.]+)"[^>]*>\$4\.32<\/text>/)?.[1])
-    console.log(`desktop ${bodyColumns}: width ${d.props.width}, cost at ${costX}`)
-    expect(d.props.width <= bodyColumns * 8).toBe(true)
-    expect(costX + 40 <= d.props.width).toBe(true)
+    const width = hudSize(d).width
+    console.log(`desktop ${bodyColumns}: width ${width}, cost at ${costX}`)
+    expect(width <= bodyColumns * 8).toBe(true)
+    expect(costX + 40 <= width).toBe(true)
     await app.unmount()
   }
 })

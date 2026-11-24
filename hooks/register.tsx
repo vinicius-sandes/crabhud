@@ -3239,10 +3239,18 @@ const registerHud: Register = on => {
         await update($, expandedA, () => open)
         await $.store.set('expanded', open)
       }
+      // W is a guess (about 8 px per column), and some systems draw narrower
+      // cells, so the guess can overshoot the band. The drawing gets no width:
+      // it takes its own (W) up to the room left, scaled by its viewBox. The row
+      // never wraps and ▾/▴ never shrinks, so the toggle stays beside the HUD.
       return below(
-        <Box key="hud" flexDirection="row" alignItems={props.expanded ? 'flex-start' : 'center'} gap={1}>
-          <Svg key="hud-svg" source={skin(hud.svg, await skinOf($))} alt={hud.alt} width={W} height={hud.height} />
-          <Button key="hud-toggle" label={props.expanded ? '▴' : '▾'} plain onPress={toggle} />
+        <Box key="hud" flexDirection="row" flexWrap="nowrap" alignItems={props.expanded ? 'flex-start' : 'center'} gap={1}>
+          <Box key="hud-art" flexShrink={1} minWidth={0}>
+            <Svg key="hud-svg" source={skin(hud.svg, await skinOf($))} alt={hud.alt} />
+          </Box>
+          <Box key="hud-toggle-box" flexShrink={0}>
+            <Button key="hud-toggle" label={props.expanded ? '▴' : '▾'} plain onPress={toggle} />
+          </Box>
         </Box>,
       )
     }

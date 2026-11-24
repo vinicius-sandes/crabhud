@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.1 (2026-11-24)
+
+- In the Windows desktop app, the ▾/▴ that opens the HUD could be pushed out of the row and vanish. The HUD now shrinks to the room left, and the toggle always stays beside it.
+
 ## 3.2.0 (2026-11-14)
 
 - `/crabhud theme on` dresses the whole desktop app: the colors (the left sidebar too), frosted glass over a backdrop, and the agents panel's cards, the progress row and the HUD in the same tones. Off by default.
