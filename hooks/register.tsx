@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput, SessionRateLimit, SessionUsage, ToolCallInput, TurnStepResult } from 'claude-code'
 
 import type { Activity, AgentRun, Flow, HudChat, HudLang, HudLimit, HudLimits, HudProps, HudStyle, HudStyles, Panel, Phase, PlannedTask, StepGroup, TurnStats, Waiting } from '../types'
+import { autoThumb, blurWindow } from './picker-art'
 import { BAR_CSS, GLIDE_MS, STYLE_HINTS, STYLE_NAMES, STYLES, asStyle, barCells, barSvg, mergeCells } from './bar-styles'
 import type { Cell } from './bar-styles'
 import { hudSvg } from './hud-svg'
@@ -9,7 +10,7 @@ import { CYCLE, CYCLE_S, WORDS, pace } from './hud-words'
 import { NO_PORTRAITS, mergePortraits, portraitFor, readPortraits } from './portraits'
 import type { PortraitSet } from './portraits'
 import { DEFAULT_PALETTE, PALETTE_IDS, PALETTES, asPalette, type PaletteId } from './palettes'
-import { BACKDROPS, BLURS, DEFAULT_BACKDROP, DEFAULT_BLUR, HS, asBackdrop, asBlur, hsCard, hsSvg, isHs, parseScene, type Backdrop, type Blur } from './backdrops'
+import { BACKDROPS, BLURS, DEFAULT_BACKDROP, DEFAULT_BLUR, HS, HS_KEYS, asBackdrop, asBlur, hsCard, hsSvg, isHs, parseScene, type Backdrop, type Blur } from './backdrops'
 import { sceneSvg } from './scenes'
 import { refusal, skin, skinCss, themeFor } from './theme'
 import { STRINGS, TEXT } from './words'
@@ -2358,6 +2359,20 @@ const backdropA = atom({ plugin: 'crabhud', key: 'backdrop' } as const, DEFAULT_
 const backdropOf = async ($: EngineInterface): Promise<Backdrop> => asBackdrop(await read($, backdropA)) ?? DEFAULT_BACKDROP
 // How much the panels blur the background (3.3.0).
 const blurA = atom({ plugin: 'crabhud', key: 'blur' } as const, DEFAULT_BLUR as string)
+// The picker in the app opens on one tab at a time (3.3.1): with every card at
+// once it came to 345,000 characters, past what the app draws in a pane, and the
+// pane stayed blank. 164,000 drew. The test "the picker stays light" holds every
+// tab and page under 130,000.
+const PICK_TABS = ['bar', 'scene', 'palette', 'blur'] as const
+type PickTab = (typeof PICK_TABS)[number]
+const pickTabA = atom({ plugin: 'crabhud', key: 'pickerTab' } as const, 'bar' as string)
+const pickPageA = atom({ plugin: 'crabhud', key: 'pickerPage' } as const, null as number | null)
+const asPickTab = (v: unknown): PickTab => (PICK_TABS as readonly unknown[]).includes(v) ? (v as PickTab) : 'bar'
+async function openPicker($: EngineInterface, tab: PickTab, title: string) {
+  await update($, pickTabA, () => tab)
+  await update($, pickPageA, () => null)
+  return $.ui.open({ id: STYLE_PANE, title, focus: true, closeOnEscape: true })
+}
 const blurOf = async ($: EngineInterface): Promise<Blur> => asBlur(await read($, blurA)) ?? DEFAULT_BLUR
 // Every 30 s: the app's HUD reads it, so its reset countdowns stay current.
 const tickA = atom({ plugin: 'crabhud', key: 'tick' } as const, 0)
@@ -3001,22 +3016,27 @@ async function skinOf($: EngineInterface): Promise<string> {
 const backdropName = (b: Backdrop, lang: HudLang): string =>
   b === 'auto' ? TEXT[lang].sceneAuto : b === 'none' ? TEXT[lang].sceneNone : isHs(b) ? HS[b].name : STYLE_NAMES[b]
 
-// A palette's swatch in the picker: its page, its accent and its second color.
+// A palette's swatch in the Colors tab: its accent, then its second color.
 const swatchSvg = (id: PaletteId): string => {
   const p = PALETTES[id]
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="14" viewBox="0 0 28 14"><rect width="28" height="14" rx="4" fill="#1a1715"/><circle cx="9" cy="7" r="4.5" fill="${p.accent}"/><circle cx="19.5" cy="7" r="3.5" fill="${p.second}"/></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="14" viewBox="0 0 44 14"><rect width="30" height="14" rx="4" fill="${p.accent}"/><rect x="32" width="12" height="14" rx="4" fill="${p.second}"/></svg>`
 }
 
 // The picker's background cards: a live small scene each, kept per palette so a
 // redraw of the picker does not draw twelve scenes again.
 const THUMB_W = 112
 const THUMB_H = 70
+// The cards leave the walking crabs out (3.3.1); the backdrop behind the chat
+// keeps them. At 112×70 a crab is two pixels tall, yet each scene's crabs weigh
+// 30 to 47 KB: with them the picker came to about 1 MB in one message, past
+// what the app takes, and the pane did not open.
+const NO_CRABS = { crab: () => '', css: '' }
 const thumbs = new Map<string, string>()
 const thumbOf = (scene: HudStyle, palette: PaletteId): string => {
   const key = `${scene}:${palette}`
   let svg = thumbs.get(key)
   if (svg === undefined) {
-    svg = sceneSvg(scene, palette, { crab, css: CRAB_CSS })
+    svg = sceneSvg(scene, palette, NO_CRABS)
     thumbs.set(key, svg)
   }
   return svg
@@ -3100,71 +3120,150 @@ async function stylePicker($: EngineInterface, e: RenderInput<'Pane'>): Promise<
         />
       </Box>
       {sample(style)}
-      <Box flexShrink={1} overflow="hidden">
-        <Text dimColor wrap="truncate">
-          {STYLE_HINTS[lang][style]}
-        </Text>
-      </Box>
+      {/* The app's rows leave the hint out (3.3.1): it never fit beside the bar. */}
+      {e.surface === 'desktop' || e.surface === 'mobile' ? null : (
+        <Box flexShrink={1} overflow="hidden">
+          <Text dimColor wrap="truncate">
+            {STYLE_HINTS[lang][style]}
+          </Text>
+        </Box>
+      )}
       <Box width={8} flexShrink={0}>
         <Text color={RC.green}>{style === current ? T.pickNow : ' '}</Text>
       </Box>
     </Box>
   ))
   const isApp = e.surface === 'desktop' || e.surface === 'mobile'
-  // A background card: its small scene and its name, the current one ticked.
-  const card = (b: Backdrop) => {
-    const scene = b === 'auto' ? styles.desktop : b
-    const source = scene === 'none' ? plainThumb(palette) : isHs(scene) ? hsCard(scene) : thumbOf(scene, palette)
+  // The terminal keeps its one list of styles: the theme is the app's.
+  if (!isApp) {
     return (
-      <Box key={`scene-${b}`} flexDirection="column" rowGap={0} alignItems="flex-start">
-        {'Svg' in els && <els.Svg source={source} alt={backdropName(b, lang)} width={THUMB_W} height={THUMB_H} />}
-        <Button key={`scene-btn-${b}`} label={`${backdropName(b, lang)}${b === backdrop ? ' ✓' : ''}`} plain onPress={() => void setBackdrop($, b)} />
+      <Box flexDirection="column" rowGap={0}>
+        {rows}
+        <Text dimColor>{T.pickHelp(STYLE_KEYS_HELP)}</Text>
+      </Box>
+    )
+  }
+  const tab = asPickTab(await read($, pickTabA))
+  const tabs = (
+    <Box flexDirection="row" columnGap={1} alignItems="center">
+      {PICK_TABS.map(t => {
+        const label = { bar: T.pickBar, scene: T.pickScene, palette: T.pickPalette, blur: T.pickBlur }[t]
+        return <Button key={`pick-tab-${t}`} label={label} {...(t === tab ? {} : { plain: true as const })} onPress={() => void update($, pickTabA, () => t)} />
+      })}
+    </Box>
+  )
+  // A card of the picker (3.3.1): a picture and its Button under it, framed,
+  // the one in use in the palette's accent. The app takes a press on words
+  // only: a Button holds no picture, and a blank Button laid over one (tried in
+  // 3.3.1) took no press in the app.
+  const accent = PALETTES[palette].accent
+  const pickCard = (id: string, isOn: boolean, picture: RenderElement | null | false, button: RenderElement) => (
+    <Box key={id} flexDirection="column" rowGap={0} alignItems="stretch" borderStyle="round" {...(isOn ? { borderColor: accent } : { borderDimColor: true })}>
+      {picture}
+      {button}
+    </Box>
+  )
+  let body: RenderElement
+  if (tab === 'scene') {
+    // The background cards in three pages: crabhud's scenes in two, split where
+    // their weight (it changes with the palette and the bar) comes out even, and
+    // Handsher's wallpapers in the third. "Follows the bar" is a light card of
+    // its own: the full scene is the bar style's card on the same pages.
+    const sourceOf = (b: Backdrop) =>
+      b === 'auto' ? autoThumb(styles.desktop, palette, THUMB_W, THUMB_H) : b === 'none' ? plainThumb(palette) : isHs(b) ? hsCard(b) : thumbOf(b, palette)
+    const ours: Backdrop[] = ['auto', 'none', ...STYLES]
+    const weight = ours.map(b => JSON.stringify(sourceOf(b)).length + 400)
+    const total = weight.reduce((a, b) => a + b, 0)
+    let cut = 1
+    let best = Infinity
+    for (let k = 1, left = 0; k < ours.length; k += 1) {
+      left += weight[k - 1] ?? 0
+      if (Math.max(left, total - left) < best) {
+        best = Math.max(left, total - left)
+        cut = k
+      }
+    }
+    const pages: Backdrop[][] = [ours.slice(0, cut), ours.slice(cut), [...HS_KEYS]]
+    const saved = await read($, pickPageA)
+    const here = Math.max(0, pages.findIndex(p => p.includes(backdrop)))
+    const at = Math.min(pages.length - 1, Math.max(0, saved ?? here))
+    const card = (b: Backdrop) => (
+      pickCard(
+        `scene-${b}`,
+        b === backdrop,
+        'Svg' in els && <els.Svg source={sourceOf(b)} alt={backdropName(b, lang)} width={THUMB_W} height={THUMB_H} />,
+        <Button key={`scene-btn-${b}`} label={`${b === 'auto' ? T.sceneAutoCard : backdropName(b, lang)}${b === backdrop ? ' ✓' : ''}`} plain onPress={() => void setBackdrop($, b)} />,
+      )
+    )
+    body = (
+      <Box flexDirection="column" rowGap={1}>
+        <Box flexDirection="row" columnGap={1} alignItems="center">
+          {pages.map((_, i) => (
+            <Button key={`scene-page-${i}`} label={T.pickScenePage(i)} {...(i === at ? {} : { plain: true as const })} onPress={() => void update($, pickPageA, () => i)} />
+          ))}
+        </Box>
+        <Text dimColor>{at === 2 ? T.pickSceneHintHs : T.pickSceneHint}</Text>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
+          {(pages[at] ?? []).map(card)}
+        </Box>
+      </Box>
+    )
+  } else if (tab === 'palette' || tab === 'blur') {
+    // Both tabs show the background in use: Colors in a small Claude window
+    // beside the list, Blur in three windows, one per blur. Each drawing holds
+    // the background once.
+    const scene = backdrop === 'none' ? null : backdrop === 'auto' ? thumbOf(styles.desktop, palette) : isHs(backdrop) ? hsCard(backdrop) : thumbOf(backdrop, palette)
+    const Svg = 'Svg' in els ? els.Svg : null
+    if (tab === 'palette') {
+      // The palettes in a column, each its name and its two colors beside it. The
+      // app draws a Button's words in its own color (3.3.1: colored cells inside
+      // one came out white), so the colors sit beside the name.
+      body = (
+        <Box flexDirection="column" rowGap={0}>
+          {PALETTE_IDS.map(id => (
+            <Box key={`palette-${id}`} flexDirection="row" columnGap={2} alignItems="center">
+              <Box width={16} flexShrink={0}>
+                <Button key={`palette-btn-${id}`} label={PALETTES[id].name[lang]} plain onPress={() => void setPalette($, id)} />
+              </Box>
+              {'Svg' in els && <els.Svg source={swatchSvg(id)} alt="" width={44} height={14} />}
+              <Text color={RC.green}>{id === palette ? T.pickNow : ' '}</Text>
+            </Box>
+          ))}
+        </Box>
+      )
+    } else {
+      body = (
+        <Box flexDirection="column" rowGap={1}>
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
+            {BLURS.map(b => (
+              pickCard(
+                `blur-card-${b}`,
+                b === blur,
+                Svg && <Svg source={blurWindow(scene, palette, b)} alt={`${T.blurName[b]}: ${T.pickBlurHint}`} width={150} height={96} />,
+                <Button key={`blur-${b}`} label={`${T.blurName[b]}${b === blur ? ' ✓' : ''}`} plain onPress={() => void setBlur($, b)} />,
+              )
+            ))}
+          </Box>
+          <Text dimColor>{scene ? T.pickBlurHint : T.pickBlurNone}</Text>
+        </Box>
+      )
+    }
+  } else {
+    body = (
+      <Box flexDirection="column" rowGap={1}>
+        {rows}
+        <Text dimColor>{T.pickHelp(STYLE_KEYS_HELP)}</Text>
       </Box>
     )
   }
   return (
-    <Box flexDirection="column" rowGap={e.surface === 'desktop' ? 1 : 0}>
-      {isApp ? <Text bold>{T.pickBar}</Text> : null}
-      {rows}
-      <Text dimColor>{T.pickHelp(STYLE_KEYS_HELP)}</Text>
-      {e.surface === 'desktop' || e.surface === 'mobile' ? (
-        <Box flexDirection="row" columnGap={2} alignItems="center">
-          <Button key="style-theme" label={T.themeButton(isTheme)} onPress={() => void setTheme($, !isTheme)} />
-          <Text dimColor wrap="truncate">{T.pickTheme}</Text>
-        </Box>
-      ) : null}
-      {isApp ? (
-        <Box flexDirection="column" rowGap={1}>
-          <Text bold>{T.pickScene}</Text>
-          <Text dimColor wrap="truncate">{T.pickSceneHint}</Text>
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
-            {BACKDROPS.map(card)}
-          </Box>
-        </Box>
-      ) : null}
-      {e.surface === 'desktop' || e.surface === 'mobile' ? (
-        <Box flexDirection="column" rowGap={1}>
-          <Text bold>{T.pickPalette}</Text>
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
-            {PALETTE_IDS.map(id => (
-              <Box key={`palette-${id}`} flexDirection="row" columnGap={1} alignItems="center">
-                {'Svg' in els && <els.Svg source={swatchSvg(id)} alt="" width={28} height={14} />}
-                <Button key={`palette-btn-${id}`} label={`${PALETTES[id].name[lang]}${id === palette ? ' ✓' : ''}`} plain onPress={() => void setPalette($, id)} />
-              </Box>
-            ))}
-          </Box>
-        </Box>
-      ) : null}
-      {isApp ? (
-        <Box flexDirection="column" rowGap={1}>
-          <Text bold>{T.pickBlur}</Text>
-          <Box flexDirection="row" columnGap={3} alignItems="center">
-            {BLURS.map(b => (
-              <Button key={`blur-${b}`} label={`${T.blurName[b]}${b === blur ? ' ✓' : ''}`} plain onPress={() => void setBlur($, b)} />
-            ))}
-          </Box>
-        </Box>
-      ) : null}
+    <Box flexDirection="column" rowGap={1}>
+      {tabs}
+      {body}
+      <Box flexDirection="row" columnGap={2} alignItems="center">
+        <Button key="style-theme" label={T.themeButton(isTheme)} onPress={() => void setTheme($, !isTheme)} />
+        <Text dimColor wrap="truncate">{T.pickTheme}</Text>
+      </Box>
     </Box>
   )
 }
@@ -3227,7 +3326,18 @@ async function statusText($: EngineInterface): Promise<string> {
 }
 
 const registerHud: Register = on => {
-  on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => stylePicker($, e))
+  // A picker that throws says why, in the pane and in a toast, instead of leaving
+  // the pane blank ("crabhud has not drawn in this pane").
+  on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => {
+    try {
+      return await stylePicker($, e)
+    } catch (err) {
+      const why = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err)
+      void $.ui.toast(`crabhud: the style picker failed: ${why.slice(0, 300)}`)
+      const { Text } = $.ui.resolve(e)
+      return <Text>{`crabhud: the style picker failed.\n${why}`}</Text>
+    }
+  })
 
   // The crabhud theme's backdrop: one scene per style, in the palette's colors,
   // with crabs walking behind the chat. It reads only the style and the palette,
@@ -3282,7 +3392,7 @@ const registerHud: Register = on => {
       // A bare `/crabhud style` opens the picker; `/crabhud style dots` sets it on
       // every surface at once.
       if (!value) {
-        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        await openPicker($, 'bar', T.pickTitle)
         return {}
       }
       const style = asStyle(value)
@@ -3294,7 +3404,7 @@ const registerHud: Register = on => {
       // `/crabhud palette mint` sets the theme's colors; a bare one opens the picker, where they are.
       const T = TEXT[(await read($, langA)) ?? 'en']
       if (!value) {
-        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        await openPicker($, 'palette', T.pickTitle)
         return {}
       }
       const id = asPalette(e.args.trim().slice(arg.length).trim())
@@ -3308,7 +3418,7 @@ const registerHud: Register = on => {
       const T = TEXT[lang]
       const rest = e.args.trim().slice(arg.length).trim()
       if (!rest) {
-        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        await openPicker($, 'scene', T.pickTitle)
         return {}
       }
       const b = asBackdrop(rest)
@@ -3321,7 +3431,7 @@ const registerHud: Register = on => {
       const lang = (await read($, langA)) ?? 'en'
       const T = TEXT[lang]
       if (!value) {
-        await $.ui.open({ id: STYLE_PANE, title: T.pickTitle, focus: true, closeOnEscape: true })
+        await openPicker($, 'blur', T.pickTitle)
         return {}
       }
       const b = asBlur(value)

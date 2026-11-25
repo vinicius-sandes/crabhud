@@ -699,7 +699,28 @@ test('/crabhud style opens the picker: twelve live previews (Client in the termi
   }
 })
 
-test('the picker shows the theme: 22 background cards, the colors and the blur; a card re-dresses the app', async ($, on) => {
+// The background tab's three pages: crabhud's scenes in two, Handsher's in the third.
+const SCENE_PAGES = [0, 1, 2]
+
+// The background tab: every page's card labels, page by page.
+async function sceneLabels(ui: any): Promise<string[][]> {
+  const pages: string[][] = []
+  for (const i of SCENE_PAGES) {
+    await ui.press({ key: `scene-page-${i}` })
+    pages.push((await ui.findAll({ type: 'Button' })).map((b: any) => String(b.props.label)))
+  }
+  return pages
+}
+
+// Turns to the background tab's page that draws the card.
+async function sceneCard(ui: any, key: string) {
+  for (const i of SCENE_PAGES) {
+    await ui.press({ key: `scene-page-${i}` })
+    if (await ui.find({ key })) return
+  }
+}
+
+test('the picker shows the theme in tabs: 22 background cards over pages, the colors and the blur; a card re-dresses the app', async ($, on) => {
   world(on, {}, new Map(), { language: 'en' })
   panes(on)
   const looks: any[] = []
@@ -709,22 +730,83 @@ test('the picker shows the theme: 22 background cards, the colors and the blur; 
   }) as any)
   await start($, on)
   await $.command.run({ command: 'crabhud', args: 'theme on' } as any)
+  await $.command.run({ command: 'crabhud', args: 'style' } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PICKER } as any)
-  const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.props.label))
-  const cards = ['Follows the bar ✓', 'No scene', ...ALL_STYLES.map(st => STYLE_NAMES[st as keyof typeof STYLE_NAMES]), ...HS_KEYS.map(k => HS[k].name)]
-  for (const c of cards) expect(labels).toContain(c)
-  expect(labels).toContain('Sharp ✓')
-  const words = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
-  for (const w of ['Bar', 'Background', 'Colors', 'Blur']) expect(words).toContain(w)
+  const first = (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.props.label))
+  for (const w of ['Bar', 'Background', 'Colors', 'Blur', 'Pixel', 'Stairs']) expect(first).toContain(w)
+  expect(first).not.toContain('No scene')
+  await ui.press({ key: 'pick-tab-scene' })
+  const pages = await sceneLabels(ui)
+  const ours = ['Bar scene ✓', 'No scene', ...ALL_STYLES.map(st => STYLE_NAMES[st as keyof typeof STYLE_NAMES])]
+  for (const c of ours) expect([...pages[0]!, ...pages[1]!]).toContain(c)
+  // The third page holds Handsher's wallpapers, and only them.
+  for (const k of HS_KEYS) expect(pages[2]).toContain(HS[k].name)
+  for (const c of ours) expect(pages[2]).not.toContain(c)
+  expect(pages[2]).toContain("Handsher's wallpapers")
+  await sceneCard(ui, 'scene-btn-jellyfish')
   const before = looks.length
   await ui.press({ key: 'scene-btn-jellyfish' })
   expect(looks.length).toBe(before + 1)
   expect(looks.at(-1).backdrop.scene).toBe('crabhud-hs-jellyfish-2')
+  await ui.press({ key: 'pick-tab-blur' })
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => String(b.props.label))).toContain('Sharp ✓')
   await ui.press({ key: 'blur-light' })
   expect(looks.at(-1).backdrop.glass.blur).toBe(8)
+  // Blur draws the background in use: the jellyfish's card, now.
+  const svgs = async () => (await ui.findAll({ type: 'Svg' })).map((v: any) => ({ source: String(v.props.source), alt: String(v.props.alt) }))
+  expect((await svgs()).some(v => v.source.includes('feGaussianBlur stdDeviation="8"'))).toBe(true)
+  // Each blur is a card: its window and its Button, framed; the one in use in the accent.
+  for (const b of ['sharp', 'light', 'medium']) expect(await ui.find({ key: `blur-${b}` })).toBeTruthy()
+  expect(JSON.stringify(await ui.drawn())).toContain('"borderStyle":"round"')
+  await ui.press({ key: 'pick-tab-palette' })
+  expect(await ui.find({ key: 'palette-btn-mint' })).toBeTruthy()
+  // Each palette shows its colors beside its name.
+  expect((await svgs()).some(v => v.source.includes('#1FD18C'))).toBe(true)
   await ui.unmount()
+  // /crabhud scene opens the background tab, on the page of the background in use.
+  await $.command.run({ command: 'crabhud', args: 'scene' } as any)
+  const again = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PICKER } as any)
+  expect((await again.findAll({ type: 'Button' })).map((b: any) => String(b.props.label))).toContain('Jellyfish ✓')
+  await again.unmount()
   // Every one of Handsher's wallpapers, with the band, stays under the app's 128 KB.
   for (const k of HS_KEYS) expect(hsSvg(k).length).toBeLessThan(131072)
+})
+
+// 3.3.0's picker drew all its cards at once: 345,000 characters in one pane, and
+// the app showed it blank ("crabhud has not drawn in this pane"), with no error
+// anywhere. 164,000 drew. The test harness has no such ceiling, so it is held
+// here: each tab, and each page of the backgrounds, as the app receives it.
+test('the picker stays light: every tab and page under 130,000 characters, in every palette, bar style and background', async ($, on) => {
+  world(on, {}, new Map(), { language: 'pt-BR', theme: true, style: { terminal: 'classic', desktop: 'dots' } })
+  panes(on)
+  on('theme.set', ((_$: unknown, _e: unknown) => ({ value: { isDrawn: true, requestId: 'look' } })) as any)
+  await start($, on)
+  const check = async (tabs = ['bar', 'scene', 'palette', 'blur']) => {
+    await $.command.run({ command: 'crabhud', args: 'style' } as any)
+    const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PICKER } as any)
+    for (const tab of tabs) {
+      await ui.press({ key: `pick-tab-${tab}` })
+      for (const page of tab === 'scene' ? SCENE_PAGES : [0]) {
+        if (tab === 'scene') await ui.press({ key: `scene-page-${page}` })
+        expect(JSON.stringify(await ui.drawn()).length).toBeLessThan(130_000)
+      }
+    }
+    await ui.unmount()
+  }
+  for (const palette of PALETTE_IDS) {
+    await $.command.run({ command: 'crabhud', args: `palette ${palette}` } as any)
+    await check()
+  }
+  for (const style of ALL_STYLES) {
+    await $.command.run({ command: 'crabhud', args: `style ${style}` } as any)
+    await check()
+  }
+  // Blur draws the background in use, three times: each background, in the palette
+  // and bar style left from above (graphite, stairs).
+  for (const scene of ['none', ...ALL_STYLES, ...HS_KEYS]) {
+    await $.command.run({ command: 'crabhud', args: `scene ${scene}` } as any)
+    await check(['blur'])
+  }
 })
 
 test('every style draws a full-width bar at 0%, 64% and 100%', async ($, on) => {
@@ -788,7 +870,7 @@ test('the progress bar takes the app style in the app and the terminal style in 
   world(on, {}, new Map(), { language: 'en', style: { terminal: 'dots', desktop: 'segments' } })
   panes(on)
   await start($, on)
-  await $.tool.call(PROGRESS as any)
+  await ($.tool as any).call(PROGRESS)
   const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   const src = String((await progressRow(app))?.props.source)
   expect(src).toContain('data-style="segments"')
@@ -810,7 +892,7 @@ test("the panel's step list reads down each column and numbers every step of the
   world(on)
   panes(on)
   await start($, on)
-  await $.tool.call(PROGRESS as any)
+  await ($.tool as any).call(PROGRESS)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
   const list = (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).includes('B0'))
   const alt = String(list?.props.alt)
@@ -865,14 +947,14 @@ test('the bar is kept on disk for its chat as it moves, and dropped when the per
   on('store.keys', () => ({ value: Object.keys(store) }) as any)
   panes(on)
   await start($, on)
-  await $.tool.call(PROGRESS as any)
+  await ($.tool as any).call(PROGRESS)
   expect(store.bars['sess-1'].flow.title).toBe('Sample project')
   expect(store.bars['sess-1'].flow.done).toBe(5)
   const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   await app.press({ key: 'crab-dismiss' })
   expect(store.bars['sess-1'].flow).toBe(null)
   // A lone step forward after that draws nothing.
-  await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
+  await ($.tool as any).call({ tool: PROGRESS.tool, done: 6 } as any)
   await app.unmount()
   const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   expect(await allText(term)).not.toContain('Sample project')
@@ -888,7 +970,7 @@ test('a reopened chat finds its bar again, and a lone done carries on from it', 
   expect(line).toContain('Sample project')
   expect(line).toContain('36%')
   await before.unmount()
-  await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
+  await ($.tool as any).call({ tool: PROGRESS.tool, done: 6 } as any)
   const after = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   const moved = await allText(after)
   expect(moved).toContain('Sample project')
@@ -901,7 +983,7 @@ test('a lone done with no bar anywhere draws no empty bar and asks for the plan 
   world(on)
   panes(on)
   await start($, on)
-  const r = await $.tool.call({ tool: PROGRESS.tool, done: 3 } as any)
+  const r = await ($.tool as any).call({ tool: PROGRESS.tool, done: 3 } as any)
   expect(JSON.stringify(r)).toContain('groups')
   const term = await $.ui.mount({ plugin: 'crabhud', surface: 'terminal', ...BAND } as any)
   expect(await allText(term)).not.toContain('crab-flow')
@@ -915,7 +997,7 @@ test('every style draws the progress bar, unfinished and finished', async ($, on
   for (const style of ALL_STYLES) {
     await $.command.run({ command: 'crabhud', args: `style ${style}` } as any)
     for (const done of [5, 14]) {
-      await $.tool.call({ ...PROGRESS, done } as any)
+      await ($.tool as any).call({ ...PROGRESS, done } as any)
       const app = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
       expect(String((await progressRow(app))?.props.source)).toContain(`data-style="${style}"`)
       await app.unmount()
@@ -1023,7 +1105,7 @@ test('a new mood sets the crab off from where it stood, never from the start', a
   // The first scene has no costume to change from.
   expect(thinking).not.toContain('@keyframes cin')
   await clock.advance(5000)
-  await $.tool.call({ tool: 'Read', tool_use_id: 'r1', file_path: '/a.ts' } as any)
+  await ($.tool as any).call({ tool: 'Read', tool_use_id: 'r1', file_path: '/a.ts' } as any)
   expect(reading).toContain('data-walk="analyze"')
   // It runs off from right where the thinking crab stood, not from the new loop's start,
   // and the new costume fades in.
@@ -1040,7 +1122,7 @@ test("Claude's question turns the row amber until it is answered", async ($, on)
     return { result: 'answered' }
   }) as any)
   await start($, on)
-  const asked = $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q1', questions: [{ question: 'Which style?' }] } as any)
+  const asked = ($.tool as any).call({ tool: 'AskUserQuestion', tool_use_id: 'q1', questions: [{ question: 'Which style?' }] } as any)
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
   const wait = await svgWith(ui, 'data-wait=')
@@ -1066,7 +1148,7 @@ test('a permission prompt that stands turns the row amber; in the terminal too',
     return { result: 'ran' }
   }) as any)
   await start($, on)
-  const ran = $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' } as any)
+  const ran = ($.tool as any).call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' } as any)
   await clock.settle()
   await $.tool.check({ tool: 'Bash', input: { command: 'npm test' } } as any)
   await clock.advance(700)
@@ -1092,7 +1174,7 @@ test('sounds are off by default; /crabhud sound on plays the chime when Claude w
     return { result: 'ok' }
   }) as any)
   await start($, on)
-  const ask = (id: string) => $.tool.call({ tool: 'AskUserQuestion', tool_use_id: id, questions: [{ question: 'Ok?' }] } as any)
+  const ask = (id: string) => ($.tool as any).call({ tool: 'AskUserQuestion', tool_use_id: id, questions: [{ question: 'Ok?' }] } as any)
   let p = ask('q1')
   await clock.advance(1000)
   await p
@@ -1149,9 +1231,9 @@ test('a step forward makes the progress tag glide from where it was', async ($, 
   const { clock } = world(on)
   panes(on)
   await start($, on)
-  await $.tool.call(PROGRESS as any)
+  await ($.tool as any).call(PROGRESS)
   await clock.advance(5000)
-  await $.tool.call({ ...PROGRESS, done: 6 } as any)
+  await ($.tool as any).call({ ...PROGRESS, done: 6 } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(String((await progressRow(ui))?.props.source)).toContain('@keyframes bgp')
   await ui.unmount()
@@ -1218,7 +1300,7 @@ test("a portraits file's group colours colour the progress bar", async ($, on) =
   world(on, {}, new Map([['/home/me/.claude/mods/my-team/crabhud-portraits.json', TEAM_PORTRAITS]]))
   panes(on)
   await start($, on)
-  await $.tool.call({ ...PROGRESS, groups: [{ name: 'Prep', steps: ['a', 'b'] }, ...PROGRESS.groups] } as any)
+  await ($.tool as any).call({ ...PROGRESS, groups: [{ name: 'Prep', steps: ['a', 'b'] }, ...PROGRESS.groups] } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(String((await progressRow(ui))?.props.source)).toContain('#E46FB0')
   await ui.unmount()
@@ -1239,7 +1321,7 @@ test("Claude's own task list draws the bar: the step in progress, short, on the 
   panes(on)
   tools(on)
   await start($, on)
-  await $.tool.call({
+  await ($.tool as any).call({
     tool: 'TodoWrite',
     tool_use_id: 't1',
     todos: [
@@ -1253,8 +1335,8 @@ test("Claude's own task list draws the bar: the step in progress, short, on the 
   expect(alt).toContain('Writing the ring · 1/3')
   await ui.unmount()
   // A skill's own bar (the progress tool) wins over the list.
-  await $.tool.call(PROGRESS as any)
-  await $.tool.call({ tool: 'TodoWrite', tool_use_id: 't2', todos: [{ content: 'Other', status: 'in_progress', activeForm: 'Other' }] } as any)
+  await ($.tool as any).call(PROGRESS)
+  await ($.tool as any).call({ tool: 'TodoWrite', tool_use_id: 't2', todos: [{ content: 'Other', status: 'in_progress', activeForm: 'Other' }] } as any)
   const after = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(await progressRow(after)).toBeDefined()
   expect(await rowOf(after, 'Tasks')).toBeUndefined()
@@ -1266,10 +1348,10 @@ test('TaskCreate and TaskUpdate draw the bar too; a deleted task leaves it', asy
   panes(on)
   tools(on)
   await start($, on)
-  for (const subject of ['Sketch', 'Build', 'Check']) await $.tool.call({ tool: 'TaskCreate', tool_use_id: subject, subject, description: subject } as any)
-  await $.tool.call({ tool: 'TaskUpdate', tool_use_id: 'u1', taskId: '1', status: 'completed' } as any)
-  await $.tool.call({ tool: 'TaskUpdate', tool_use_id: 'u2', taskId: '2', status: 'in_progress', activeForm: 'Building the bar' } as any)
-  await $.tool.call({ tool: 'TaskUpdate', tool_use_id: 'u3', taskId: '3', status: 'deleted' } as any)
+  for (const subject of ['Sketch', 'Build', 'Check']) await ($.tool as any).call({ tool: 'TaskCreate', tool_use_id: subject, subject, description: subject } as any)
+  await ($.tool as any).call({ tool: 'TaskUpdate', tool_use_id: 'u1', taskId: '1', status: 'completed' } as any)
+  await ($.tool as any).call({ tool: 'TaskUpdate', tool_use_id: 'u2', taskId: '2', status: 'in_progress', activeForm: 'Building the bar' } as any)
+  await ($.tool as any).call({ tool: 'TaskUpdate', tool_use_id: 'u3', taskId: '3', status: 'deleted' } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   expect(String((await rowOf(ui, 'Tasks'))?.props.alt)).toContain('Building the bar · 1/2')
   await ui.unmount()
@@ -1283,7 +1365,7 @@ test('an approved plan draws its steps on the bar; the answer that ends the turn
   on('turn.complete', () => ({ text: 'Done.' }) as any)
   await start($, on)
   await $.turn.start({ text: 'go', turnId: 'x' } as any)
-  await $.tool.call({ tool: 'ExitPlanMode', tool_use_id: 'p1', plan: '' } as any)
+  await ($.tool as any).call({ tool: 'ExitPlanMode', tool_use_id: 'p1', plan: '' } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   const row = await rowOf(ui, 'Ring HUD')
   expect(String(row?.props.alt)).toContain('0/3')
@@ -1309,8 +1391,8 @@ test('at 100% the crab celebrates (and the fanfare plays with sounds on); a list
     { content: 'One', status: 'completed', activeForm: 'One' },
     { content: 'Two', status: last, activeForm: 'Two' },
   ]
-  await $.tool.call({ tool: 'TodoWrite', tool_use_id: 'a', todos: todos('in_progress') } as any)
-  await $.tool.call({ tool: 'TodoWrite', tool_use_id: 'b', todos: todos('completed') } as any)
+  await ($.tool as any).call({ tool: 'TodoWrite', tool_use_id: 'a', todos: todos('in_progress') } as any)
+  await ($.tool as any).call({ tool: 'TodoWrite', tool_use_id: 'b', todos: todos('completed') } as any)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
   const src = String((await rowOf(ui, 'Tasks'))?.props.source)
   expect(src).toContain('class="jp"')
@@ -1334,7 +1416,7 @@ test('while Claude answers, the row counts its actions and time beside the crab;
   on('turn.start', ((_$: unknown, e: any) => ({ turnId: e.turnId })) as any)
   await start($, on)
   await $.turn.start({ text: 'go', turnId: 'x' } as any)
-  for (const id of ['r1', 'r2', 'r3']) await $.tool.call({ tool: 'Read', tool_use_id: id, file_path: '/a.ts' } as any)
+  for (const id of ['r1', 'r2', 'r3']) await ($.tool as any).call({ tool: 'Read', tool_use_id: id, file_path: '/a.ts' } as any)
   await clock.advance(72_000)
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...WORKING_BAND } as any)
   const walk = String((await svgWith(ui, 'data-walk='))?.props.source)
@@ -1407,7 +1489,7 @@ test('/crabhud demo plays sample bars and agents, then puts everything back', as
   const { clock } = world(on)
   panes(on)
   await start($, on)
-  await $.tool.call(PROGRESS as any)
+  await ($.tool as any).call(PROGRESS)
   const r = (await $.command.run({ command: 'crabhud', args: 'demo' } as any)) as any
   expect(String(r.text)).toContain('Demo')
   const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
@@ -1480,8 +1562,8 @@ test('/crabhud theme dresses the app: a background apart from the bar, the palet
   expect(first).not.toContain('url(#bgVeil)')
   expect(first).not.toMatch(/fill="url\(#bg(GA|GB|GlowLow)\)"/)
   expect(first.length).toBeLessThan(131072)
-  await $.tool.call(PROGRESS as any)
-  await $.tool.call({ tool: PROGRESS.tool, done: 6 } as any)
+  await ($.tool as any).call(PROGRESS)
+  await ($.tool as any).call({ tool: PROGRESS.tool, done: 6 } as any)
   expect(String((await back.findAll({ type: 'Svg' }))[0]?.props.source)).toBe(first)
   await back.unmount()
 
@@ -1549,7 +1631,7 @@ test('on a Mac the band takes 8.8 px a column, and every row of it can shrink', 
     world(on, { HOME: home }, new Map(), { language: 'en' })
     panes(on)
     await start($, on)
-    await $.tool.call(PROGRESS as any)
+    await ($.tool as any).call(PROGRESS)
     const ui = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...BAND } as any)
     const row = await progressRow(ui)
     // No size on the Svg: the app draws it at its own width, or narrower.
@@ -1571,7 +1653,7 @@ test('the bar names its groups whole or not at all, and the tag keeps the step w
   world(on, {}, new Map(), { language: 'en' })
   panes(on)
   await start($, on)
-  await $.tool.call({
+  await ($.tool as any).call({
     tool: 'mcp__crabhud__progress',
     title: 'A long title for a small job that goes on',
     done: 2,
@@ -1633,7 +1715,7 @@ test('the panel: no tiles, the crew on the usage line, Collapse on the top row',
   panes(on)
   on('agent.spawn', () => ({ agentId: 'agent-1', model: 'claude-sonnet-5-5' }) as any)
   await start($, on)
-  await $.tool.call(PROGRESS as any)
+  await ($.tool as any).call(PROGRESS)
   await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'a', description: 'Write the notes', subagentType: 'crab-light' } as any)
   const pane = await $.ui.mount({ plugin: 'crabhud', surface: 'desktop', ...PANEL } as any)
   const svgs = await pane.findAll({ type: 'Svg' })
