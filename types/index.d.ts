@@ -191,6 +191,10 @@ declare module 'claude-code' {
       backdrop: string
       /** `/crabhud blur` or the picker: how much the panels blur the background (sharp, light, medium). */
       blur: string
+      /** The picker's open tab in the app: bar, scene, palette or blur. */
+      pickerTab: string
+      /** The background tab's page, from 0; null opens the page of the current background. */
+      pickerPage: number | null
       /** `/crabhud demo` on until this time (ms), else 0. */
       demo: number
     }

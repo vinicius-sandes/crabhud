@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.3.1 (2026-11-25)
+
+- The `/crabhud style` picker shows again in the desktop app, on Mac and Windows. In 3.3.0 it drew all its cards at once, about 345,000 characters in one pane, and the app left the pane blank ("crabhud has not drawn in this pane") without an error anywhere. It now opens on one tab at a time: Bar, Background, Colors or Blur, each under 130,000 characters (164,000 is the most known to draw).
+- `/crabhud style` opens the Bar tab, `/crabhud palette` the Colors tab, `/crabhud scene` the Background tab on the page of the background in use, and `/crabhud blur` the Blur tab.
+- Background: three pages, picked by name at the top. crabhud's scenes fill the first two, split where their weight comes out even; Handsher's eight wallpapers have the third, with his credit. *Follows the bar* is a light card of its own, named *Bar scene* to fit (the bar style's bar and a loop sign), instead of drawing its scene a second time, and the cards leave out the walking crabs.
+- Background and Blur draw each choice as a framed card: the picture with its button as wide as the card under it, the one in use framed in the palette's accent. The app takes a press on the name only.
+- Bar: in the app, each style shows its name and its live bar; the hint that never fit beside it stays in the alt text (the terminal keeps it).
+- Colors: the palettes in a column, each name with a small swatch of its two colors beside it (the app does not draw the swatch yet). The app itself shows the rest as soon as one is picked.
+- Blur: three cards side by side, each the background in use at half its size behind the glass at that blur.
+- The terminal picker is unchanged: the bar styles, their hints and the help text.
+
 ## 3.3.0 (2026-11-24)
 
 - The band above the prompt reaches the right edge in the desktop app on a Mac, where the app draws about 8.8 px a column (elsewhere crabhud still counts 8). Every row of the band (the progress bar, the walking crab, the amber row and the line under them) shrinks to the room left instead of wrapping.
